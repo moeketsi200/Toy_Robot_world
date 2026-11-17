@@ -1,0 +1,84 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { IncomingMessage } from 'http'
+import { Authenticator, AuthChain } from '@dcl/crypto'
+
+const TOKEN_TTL_MS = 8 * 60 * 60 * 1000
+const tokenSecret = process.env.AUTH_TOKEN_SECRET || randomBytes(32).toString('hex')
+
+export interface SessionIdentity {
+  wallet: string
+  expiresAt: number
+  sessionId: string
+}
+
+const consumedSessionIds = new Map<string, number>()
+
+function header(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name]
+  return Array.isArray(value) ? value[0] : value
+}
+
+export async function authenticateSignedSession(req: IncomingMessage): Promise<string> {
+  const timestampHeader = header(req, 'x-identity-timestamp')
+  const metadata = header(req, 'x-identity-metadata')
+  if (!timestampHeader || !metadata) throw new Error('Missing Decentraland signed request headers')
+
+  const timestamp = Number(timestampHeader)
+  if (!Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 2 * 60 * 1000) {
+    throw new Error('Signed request timestamp is invalid or expired')
+  }
+
+  const authChain: AuthChain = []
+  for (let index = 0; index < 3; index++) {
+    const value = header(req, `x-identity-auth-chain-${index}`)
+    if (!value) throw new Error('Incomplete Decentraland auth chain')
+    authChain.push(JSON.parse(value))
+  }
+
+  const expectedPayload = `post:/auth/session:${timestampHeader}:${metadata}`.toLowerCase()
+  if (authChain[2].payload.toLowerCase() !== expectedPayload) throw new Error('Signed request does not match this endpoint')
+
+  const wallet = Authenticator.ownerAddress(authChain).toLowerCase()
+  const validation = await Authenticator.validateSignature(wallet, authChain, undefined, Date.now())
+  if (!validation.ok) throw new Error('Decentraland identity signature is invalid')
+  return wallet
+}
+
+export function issueSessionToken(wallet: string): string {
+  const identity: SessionIdentity = { wallet, expiresAt: Date.now() + TOKEN_TTL_MS, sessionId: randomBytes(16).toString('hex') }
+  const payload = Buffer.from(JSON.stringify(identity)).toString('base64url')
+  const signature = createHmac('sha256', tokenSecret).update(payload).digest('base64url')
+  return `${payload}.${signature}`
+}
+
+export function verifySessionToken(token: string | undefined): SessionIdentity | null {
+  if (!token) return null
+  const [payload, signature, extra] = token.split('.')
+  if (!payload || !signature || extra) return null
+  const expected = createHmac('sha256', tokenSecret).update(payload).digest()
+  let actual: Buffer
+  try {
+    actual = Buffer.from(signature, 'base64url')
+  } catch {
+    return null
+  }
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null
+
+  try {
+    const identity = JSON.parse(Buffer.from(payload, 'base64url').toString()) as SessionIdentity
+    if (!/^0x[0-9a-f]{40}$/.test(identity.wallet) || !identity.sessionId || identity.expiresAt <= Date.now()) return null
+    return identity
+  } catch {
+    return null
+  }
+}
+
+export function consumeSession(identity: SessionIdentity): boolean {
+  const now = Date.now()
+  for (const [sessionId, expiresAt] of consumedSessionIds) {
+    if (expiresAt <= now) consumedSessionIds.delete(sessionId)
+  }
+  if (consumedSessionIds.has(identity.sessionId)) return false
+  consumedSessionIds.set(identity.sessionId, identity.expiresAt)
+  return true
+}

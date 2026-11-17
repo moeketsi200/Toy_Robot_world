@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: toy-robot-worlds-server
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_TOKEN_SECRET
+        generateValue: true
+      - key: ADMIN_WALLET
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: toy-robot-worlds-profiles
+          property: connectionString
+databases:
+  - name: toy-robot-worlds-profiles
+    databaseName: toy_robot_worlds
+    user: toy_robot_worlds
+    plan: free
+    postgresMajorVersion: "16"

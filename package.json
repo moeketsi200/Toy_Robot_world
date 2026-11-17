@@ -1,0 +1,30 @@
+{
+  "name": "toy-robot-worlds",
+  "version": "1.0.0",
+  "description": "Toy Robot Worlds - Decentraland Edition",
+  "scripts": {
+    "start": "sdk-commands start",
+    "deploy": "sdk-commands deploy",
+    "build": "sdk-commands build",
+    "server:install": "npm --prefix server install",
+    "server:build": "npm --prefix server run build",
+    "server:start": "npm --prefix server start",
+    "server:dev": "npm --prefix server run dev",
+    "upgrade-sdk": "npm install --save-dev @dcl/sdk@latest",
+    "upgrade-sdk:next": "npm install --save-dev @dcl/sdk@next"
+  },
+  "devDependencies": {
+    "@dcl/js-runtime": "7.33.0",
+    "@dcl/sdk": "latest"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=6.0.0"
+  },
+  "prettier": {
+    "semi": false,
+    "singleQuote": true,
+    "printWidth": 120,
+    "trailingComma": "none"
+  }
+}
