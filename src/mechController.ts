@@ -9,10 +9,13 @@ import {
   inputSystem,
   InputAction,
   PointerEventType,
+  PrimaryPointerInfo,
+  UiCanvasInformation,
   MeshRenderer,
   Material
 } from '@dcl/sdk/ecs'
 import { Color4, Vector3, Quaternion } from '@dcl/sdk/math'
+import { isMobile } from '@dcl/sdk/platform'
 import { MechPilot, MechStateEnum, Obstacle, PitHazard, LaserProjectile } from './components'
 import { initNetworkClient, netSendInput, netSendAction, netSelectRobot, netJoinWar, netLeaveWar, disconnectNetworkClient, isMultiplayerConnected } from './networkClient'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
@@ -24,7 +27,9 @@ export let mechCameraEntity: Entity | null = null
 let lastShotTime = 0
 let fireRequested = false
 const SHOT_COOLDOWN = 0.35
+const MOBILE_AIM_SENSITIVITY = 0.14
 let selectedClassId: RobotClassId = 'bastion'
+let lastMobileAimX: number | undefined
 
 /** Queue one weapon shot from the on-screen cockpit button. */
 export function requestFire(): void {
@@ -33,6 +38,19 @@ export function requestFire(): void {
 
 export function getSelectedClassId(): RobotClassId {
   return selectedClassId
+}
+
+/** Position the reticle under the desktop mouse, or at screen center on mobile. */
+export function getAimReticlePosition(): { left: number; top: number } {
+  const canvas = UiCanvasInformation.getOrNull(engine.RootEntity)
+  const canvasWidth = canvas?.width ?? 1920
+  const canvasHeight = canvas?.height ?? 1080
+  const pointerPosition = !isMobile() && getGameMode() !== 'solo'
+    ? PrimaryPointerInfo.getOrNull(engine.RootEntity)?.screenCoordinates
+    : undefined
+  return pointerPosition
+    ? { left: pointerPosition.x, top: pointerPosition.y }
+    : { left: canvasWidth / 2, top: canvasHeight / 2 }
 }
 
 export function selectRobotClass(classId: RobotClassId): boolean {
@@ -101,6 +119,7 @@ export function enterMech() {
 
   const pilot = MechPilot.getMutable(playerMechEntity)
   fireRequested = false
+  lastMobileAimX = undefined
   const robotClass = ROBOT_CLASSES[selectedClassId]
   pilot.isPiloting = true
   pilot.classId = selectedClassId
@@ -112,6 +131,8 @@ export function enterMech() {
   pilot.stateTimer = 0
   pilot.dashCooldown = 0
   pilot.chassisYaw = 0
+  pilot.turretYaw = 0
+  Transform.getMutable(mechCameraEntity).rotation = Quaternion.fromEulerDegrees(14, 0, 0)
 
   // Spawn mech at arena start position
   Transform.getMutable(playerMechEntity).position = Vector3.create(32, 0.1, 14)
@@ -142,6 +163,7 @@ export function exitMech() {
 
   const pilot = MechPilot.getMutable(playerMechEntity)
   fireRequested = false
+  lastMobileAimX = undefined
   pilot.isPiloting = false
   pilot.state = MechStateEnum.NORMAL
 
@@ -276,7 +298,20 @@ export function mechControlSystem(dt: number) {
     }
   }
 
-  netSendInput(networkMoveDir, networkTurnDir, pilot.turretYaw || pilot.chassisYaw)
+  if (!serverAuthoritative) {
+    // Solo practice keeps the weapon aligned with the chassis. Multiplayer aim is
+    // controlled with the mouse on desktop and right-side touch movement on mobile.
+    pilot.turretYaw = pilot.chassisYaw
+  } else if (isMobile()) {
+    updateMobileAim(pilot)
+  } else {
+    const ray = PrimaryPointerInfo.getOrNull(engine.RootEntity)?.worldRayDirection
+    if (ray && Math.hypot(ray.x, ray.z) > 0.001) {
+      pilot.turretYaw = normalizeYaw((Math.atan2(ray.x, ray.z) * 180) / Math.PI)
+    }
+  }
+
+  netSendInput(networkMoveDir, networkTurnDir, pilot.turretYaw)
 
   // 3. Combat Action Inputs
   // Reload [E]
@@ -328,7 +363,7 @@ export function mechControlSystem(dt: number) {
       lastShotTime = 0
       fireRequested = false
       netSendAction('fire')
-      firePlayerLasers(transform.position, pilot.chassisYaw, robotClass.shotStyle, robotClass.damage)
+      firePlayerLasers(transform.position, pilot.turretYaw, robotClass.shotStyle, robotClass.damage)
 
       // Automatic Reload when last shot is fired
       if (pilot.ammo === 0) {
@@ -342,6 +377,32 @@ export function mechControlSystem(dt: number) {
       pilot.stateTimer = robotClass.reloadTime
       console.log('Ammo empty! Auto-reloading weapons (3.0s waiting time)...')
     }
+  }
+}
+
+function normalizeYaw(yaw: number): number {
+  return ((yaw % 360) + 540) % 360 - 180
+}
+
+function updateMobileAim(pilot: { turretYaw: number; chassisYaw: number }): void {
+  const pointerX = PrimaryPointerInfo.getOrNull(engine.RootEntity)?.screenCoordinates?.x
+  const canvasWidth = UiCanvasInformation.getOrNull(engine.RootEntity)?.width ?? 1920
+  const rightSideStart = canvasWidth * 0.45
+
+  if (pointerX !== undefined) {
+    if (lastMobileAimX !== undefined && pointerX >= rightSideStart && lastMobileAimX >= rightSideStart) {
+      const dragDelta = pointerX - lastMobileAimX
+      // Ignore large coordinate jumps when a new touch begins on the right side.
+      if (Math.abs(dragDelta) <= 120) {
+        pilot.turretYaw = normalizeYaw(pilot.turretYaw + dragDelta * MOBILE_AIM_SENSITIVITY)
+      }
+    }
+    lastMobileAimX = pointerX
+  }
+
+  if (mechCameraEntity && Transform.has(mechCameraEntity)) {
+    const camera = Transform.getMutable(mechCameraEntity)
+    camera.rotation = Quaternion.fromEulerDegrees(14, normalizeYaw(pilot.turretYaw - pilot.chassisYaw), 0)
   }
 }
 

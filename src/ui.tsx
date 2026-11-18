@@ -1,8 +1,9 @@
 import { engine, Transform } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import ReactEcs, { Button, Input, Label, ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs'
+import { isMobile } from '@dcl/sdk/platform'
 import { MechPilot, MechStateEnum } from './components'
-import { playerMechEntity, enterMech, exitMech, requestFire, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable } from './mechController'
+import { playerMechEntity, enterMech, exitMech, requestFire, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition } from './mechController'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { GameMode, getGameMode, modeLabel } from './gameMode'
 import { getNetworkMessage, initNetworkClient, isMultiplayerConnected, isNetworkConnecting } from './networkClient'
@@ -19,6 +20,7 @@ export function setupUi() {
 const uiComponent = () => {
   const pilot = playerMechEntity ? MechPilot.getOrNull(playerMechEntity) : null
   const isPiloting = pilot?.isPiloting ?? false
+  const aimReticle = getAimReticlePosition()
 
   return (
     <UiEntity
@@ -68,7 +70,7 @@ const uiComponent = () => {
             width: 32,
             height: 32,
             positionType: 'absolute',
-            position: { top: '50%', left: '50%' },
+            position: { top: aimReticle.top, left: aimReticle.left },
             margin: { top: -16, left: -16 },
             alignItems: 'center',
             justifyContent: 'center'
@@ -177,18 +179,24 @@ const uiComponent = () => {
             uiTransform={{ height: 16 }}
           />
           <Label
-            value="[W/S] Drive | [A/D] Turn | [1] Exit Mech"
+            value={getGameMode() === 'solo'
+              ? '[W/S] Drive | [A/D] Turn | [1] Exit Mech'
+              : isMobile()
+                ? 'Left stick: drive | Drag right side: aim'
+                : 'W/S drive | A/D turn | Mouse aim'}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
             uiTransform={{ height: 16 }}
           />
-          <Button
-            value="FIRE"
-            variant="primary"
-            fontSize={13}
-            uiTransform={{ width: 150, height: 34, alignSelf: 'center', margin: 2 }}
-            onMouseDown={requestFire}
-          />
+          {isMobile() && (
+            <Button
+              value="FIRE"
+              variant="primary"
+              fontSize={13}
+              uiTransform={{ width: 150, height: 34, alignSelf: 'center', margin: 2 }}
+              onMouseDown={requestFire}
+            />
+          )}
         </UiEntity>
       )}
 

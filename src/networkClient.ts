@@ -7,7 +7,7 @@
  * - Receives WORLD_TICK packets and updates remote robot entity positions.
  */
 
-import { engine, Transform, GltfContainer, MeshRenderer, Material, Entity, executeTask } from '@dcl/sdk/ecs'
+import { engine, Transform, GltfContainer, MeshRenderer, Material, Entity, executeTask, TextShape, Billboard } from '@dcl/sdk/ecs'
 import { Vector3, Quaternion, Color4 } from '@dcl/sdk/math'
 import { GameEvent, RobotState, WelcomePacket, WorldTickPacket, RobotClassId } from '../server/src/types'
 import { getSelectedClassId, playerMechEntity } from './mechController'
@@ -41,6 +41,8 @@ let inputSendTimer = 0
 
 /** Map of remote robot entity IDs (string) → DCL entity */
 const remoteRobotEntities = new Map<string, Entity>()
+const remoteRobotLabels = new Map<string, Entity>()
+const shotEffects: Array<{ entity: Entity; remaining: number }> = []
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -127,6 +129,7 @@ export function disconnectNetworkClient(): void {
 
 /** ECS system — call engine.addSystem(networkSystem) in index.ts */
 export function networkSystem(dt: number): void {
+  updateShotEffects(dt)
   if (getGameMode() === 'solo' || !isConnected) return
 
   inputSendTimer += dt
@@ -267,6 +270,9 @@ function reconcileWorld(robots: RobotState[]): void {
     if (!seenIds.has(id)) {
       engine.removeEntity(ent)
       remoteRobotEntities.delete(id)
+      const label = remoteRobotLabels.get(id)
+      if (label !== undefined) engine.removeEntity(label)
+      remoteRobotLabels.delete(id)
       console.log('[Net] Robot left:', id)
     }
   }
@@ -274,7 +280,9 @@ function reconcileWorld(robots: RobotState[]): void {
 
 function clearRemoteRobots(): void {
   for (const entity of remoteRobotEntities.values()) engine.removeEntity(entity)
+  for (const entity of remoteRobotLabels.values()) engine.removeEntity(entity)
   remoteRobotEntities.clear()
+  remoteRobotLabels.clear()
 }
 
 function reconcileLocalRobot(robot: RobotState): void {
@@ -322,7 +330,20 @@ function spawnRemoteRobot(robot: RobotState): void {
     GltfContainer.create(ent, { src: 'assets/models/mech_bastion.glb' })
   }
 
+  const label = engine.addEntity()
+  Transform.create(label, {
+    position: Vector3.create(0, 3.2, 0),
+    parent: ent
+  })
+  Billboard.create(label)
+  TextShape.create(label, {
+    text: remoteShieldText(robot),
+    fontSize: 2.8,
+    textColor: Color4.create(1, 0.35, 0.35, 1)
+  })
+
   remoteRobotEntities.set(robot.id, ent)
+  remoteRobotLabels.set(robot.id, label)
   console.log('[Net] Robot joined:', robot.id, robot.isBot ? '(bot)' : '(player)')
 }
 
@@ -342,16 +363,61 @@ function updateRemoteRobot(robot: RobotState): void {
   }
 
   t.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw, 0)
+
+  const label = remoteRobotLabels.get(robot.id)
+  if (label !== undefined) {
+    const text = TextShape.getMutableOrNull(label)
+    if (text) text.text = remoteShieldText(robot)
+  }
 }
 
 function processEvents(events: GameEvent[]): void {
   for (const ev of events) {
+    if (ev.type === 'LASER_FIRED' && ev.from && ev.to) {
+      spawnNetworkShot(ev.from, ev.to, ev.shooterId === myRobotId)
+    }
     if (ev.type === 'DAMAGE_TAKEN' && ev.targetId === myRobotId) {
       console.log('[Net] We took', ev.damage, 'damage from', ev.shooterId)
       // HUD damage flash is handled by ui.tsx reading MechPilot component
     }
     if (ev.type === 'ROBOT_DESTROYED') {
       console.log('[Net] Robot destroyed:', ev.targetId, 'by', ev.shooterId)
+    }
+  }
+}
+
+function remoteShieldText(robot: RobotState): string {
+  const pips = Array.from({ length: robot.maxShields }, (_, index) => index < robot.shields ? '■' : '□').join('')
+  return `${robot.name}\nSHIELDS ${pips}`
+}
+
+function spawnNetworkShot(from: [number, number, number], to: [number, number, number], isPlayerShot: boolean): void {
+  const dx = to[0] - from[0]
+  const dz = to[2] - from[2]
+  const length = Math.hypot(dx, dz)
+  if (length < 0.1) return
+
+  const beam = engine.addEntity()
+  Transform.create(beam, {
+    position: Vector3.create((from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2),
+    scale: Vector3.create(0.1, 0.1, length),
+    rotation: Quaternion.fromEulerDegrees(0, (Math.atan2(dx, dz) * 180) / Math.PI, 0)
+  })
+  MeshRenderer.setCylinder(beam)
+  Material.setPbrMaterial(beam, {
+    albedoColor: isPlayerShot ? Color4.create(0, 0.9, 1, 1) : Color4.create(1, 0.12, 0.12, 1),
+    emissiveColor: isPlayerShot ? Color4.create(0, 0.9, 1, 1) : Color4.create(1, 0.12, 0.12, 1)
+  })
+  shotEffects.push({ entity: beam, remaining: 0.12 })
+}
+
+function updateShotEffects(dt: number): void {
+  for (let index = shotEffects.length - 1; index >= 0; index--) {
+    const effect = shotEffects[index]
+    effect.remaining -= dt
+    if (effect.remaining <= 0) {
+      engine.removeEntity(effect.entity)
+      shotEffects.splice(index, 1)
     }
   }
 }
