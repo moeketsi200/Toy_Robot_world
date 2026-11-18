@@ -51,8 +51,11 @@ const BOTS_CONFIG: BotConfig[] = [
 ]
 
 const botLabelMap = new Map<Entity, Entity>()
+const botEntities = new Set<Entity>()
 
 export function initSentinelBot() {
+  if (botEntities.size > 0) return
+
   for (const config of BOTS_CONFIG) {
     const botEnt = engine.addEntity()
     Transform.create(botEnt, {
@@ -87,11 +90,18 @@ export function initSentinelBot() {
     })
 
     botLabelMap.set(botEnt, labelEnt)
+    botEntities.add(botEnt)
   }
 }
 
 export function sentinelAiSystem(dt: number) {
-  if (getGameMode() !== 'solo') return
+  if (getGameMode() !== 'solo') {
+    removeSentinelBots()
+    return
+  }
+
+  // Recreate the local practice opponents when switching back from multiplayer.
+  if (botEntities.size === 0) initSentinelBot()
 
   // Get player position
   let playerPos: Vector3 | null = null
@@ -166,6 +176,16 @@ export function sentinelAiSystem(dt: number) {
       }
     }
   }
+}
+
+function removeSentinelBots(): void {
+  for (const botEnt of botEntities) {
+    const labelEnt = botLabelMap.get(botEnt)
+    if (labelEnt !== undefined) engine.removeEntity(labelEnt)
+    engine.removeEntity(botEnt)
+    botLabelMap.delete(botEnt)
+  }
+  botEntities.clear()
 }
 
 export function damageBot(botEnt: Entity, damage: number) {

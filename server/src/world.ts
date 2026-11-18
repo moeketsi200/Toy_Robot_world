@@ -48,9 +48,7 @@ export class GameWorld {
   ]
 
   constructor() {
-    // Initialize 2 Server-Side Sentinel Bots for immediate action
-    this.spawnBot('Sentinel-Alpha', 32, 40)
-    this.spawnBot('Sentinel-Bravo', 18, 28)
+    // Multiplayer matches are player-versus-player; local solo practice owns its AI bots.
   }
 
   private createBox(x: number, z: number, sx: number, sz: number): BoxCollider {
