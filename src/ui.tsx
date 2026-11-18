@@ -2,7 +2,7 @@ import { engine, Transform } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import ReactEcs, { Button, Input, Label, ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs'
 import { MechPilot, MechStateEnum } from './components'
-import { playerMechEntity, enterMech, exitMech, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable } from './mechController'
+import { playerMechEntity, enterMech, exitMech, requestFire, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable } from './mechController'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { GameMode, getGameMode, modeLabel } from './gameMode'
 import { getNetworkMessage, initNetworkClient, isMultiplayerConnected, isNetworkConnecting } from './networkClient'
@@ -181,6 +181,13 @@ const uiComponent = () => {
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
             uiTransform={{ height: 16 }}
+          />
+          <Button
+            value="FIRE"
+            variant="primary"
+            fontSize={13}
+            uiTransform={{ width: 150, height: 34, alignSelf: 'center', margin: 2 }}
+            onMouseDown={requestFire}
           />
         </UiEntity>
       )}

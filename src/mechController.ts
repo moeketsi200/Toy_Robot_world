@@ -8,6 +8,7 @@ import {
   InputModifier,
   inputSystem,
   InputAction,
+  PointerEventType,
   MeshRenderer,
   Material
 } from '@dcl/sdk/ecs'
@@ -21,8 +22,14 @@ export let playerMechEntity: Entity | null = null
 export let mechCameraEntity: Entity | null = null
 
 let lastShotTime = 0
+let fireRequested = false
 const SHOT_COOLDOWN = 0.35
 let selectedClassId: RobotClassId = 'bastion'
+
+/** Queue one weapon shot from the on-screen cockpit button. */
+export function requestFire(): void {
+  fireRequested = true
+}
 
 export function getSelectedClassId(): RobotClassId {
   return selectedClassId
@@ -93,6 +100,7 @@ export function enterMech() {
   if (getGameMode() === 'multiplayer' && !isMultiplayerConnected()) return
 
   const pilot = MechPilot.getMutable(playerMechEntity)
+  fireRequested = false
   const robotClass = ROBOT_CLASSES[selectedClassId]
   pilot.isPiloting = true
   pilot.classId = selectedClassId
@@ -133,6 +141,7 @@ export function exitMech() {
   if (!playerMechEntity) return
 
   const pilot = MechPilot.getMutable(playerMechEntity)
+  fireRequested = false
   pilot.isPiloting = false
   pilot.state = MechStateEnum.NORMAL
 
@@ -298,10 +307,16 @@ export function mechControlSystem(dt: number) {
 
   // Fire Lasers [LMB / Pointer]
   lastShotTime += dt
-  if (inputSystem.isPressed(InputAction.IA_POINTER) && pilot.state === MechStateEnum.NORMAL && lastShotTime >= robotClass.fireInterval) {
+  if (inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+    fireRequested = true
+  }
+  if (pilot.state !== MechStateEnum.NORMAL) fireRequested = false
+  const fireInput = fireRequested
+  if (fireInput && pilot.state === MechStateEnum.NORMAL && lastShotTime >= robotClass.fireInterval) {
     if (serverAuthoritative) {
       netSendAction('fire')
       lastShotTime = 0
+      fireRequested = false
     } else if (pilot.ammo > 0) {
       const shotCost = robotClass.shotStyle === 'burst' ? 3 : 1
       if (pilot.ammo < shotCost) {
@@ -311,6 +326,7 @@ export function mechControlSystem(dt: number) {
       }
       pilot.ammo -= shotCost
       lastShotTime = 0
+      fireRequested = false
       netSendAction('fire')
       firePlayerLasers(transform.position, pilot.chassisYaw, robotClass.shotStyle, robotClass.damage)
 
