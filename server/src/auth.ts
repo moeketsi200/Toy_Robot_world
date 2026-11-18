@@ -49,9 +49,11 @@ export async function authenticateSignedSession(req: IncomingMessage): Promise<s
   if (authChain.length < 2) throw new Error('Incomplete Decentraland auth chain')
 
   const signedRequest = authChain[authChain.length - 1]
-  const expectedPayload = `post:/auth/session:${timestampHeader}:${metadata}`.toLowerCase()
-  if (typeof signedRequest.payload !== 'string' || signedRequest.payload.toLowerCase() !== expectedPayload) {
-    throw new Error(`Signed request does not match this endpoint (received ${String(signedRequest.payload)})`)
+  // SignedFetch canonicalizes the method and path to lowercase, but metadata is
+  // signed byte-for-byte. Lowercasing the whole payload mutates JSON keys/values.
+  const expectedPayload = `post:/auth/session:${timestampHeader}:${metadata}`
+  if (typeof signedRequest.payload !== 'string' || signedRequest.payload !== expectedPayload) {
+    throw new Error('Signed request does not match this endpoint')
   }
 
   const wallet = Authenticator.ownerAddress(authChain).toLowerCase()
