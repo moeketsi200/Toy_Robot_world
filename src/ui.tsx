@@ -3,7 +3,7 @@ import { Color4 } from '@dcl/sdk/math'
 import ReactEcs, { Button, Input, Label, ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs'
 import { isMobile } from '@dcl/sdk/platform'
 import { MechPilot, MechStateEnum } from './components'
-import { playerMechEntity, enterMech, exitMech, requestFire, stopFire, requestReload, requestRepair, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition, adjustMobileAimSensitivity, getMobileAimSensitivity } from './mechController'
+import { playerMechEntity, enterMech, exitMech, requestFire, stopFire, requestReload, requestRepair, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition, adjustMobileAimSensitivity, getMobileAimSensitivity, adjustDesktopAimSensitivity, getDesktopAimSensitivity, toggleMobileAimInvertY, isMobileAimInverted } from './mechController'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { GameMode, getGameMode, modeLabel } from './gameMode'
 import { getNetworkMessage, initNetworkClient, isMultiplayerConnected, isNetworkConnecting } from './networkClient'
@@ -88,10 +88,10 @@ const uiComponent = () => {
       {isPiloting && (
         <UiEntity
           uiTransform={{
-            width: 300,
-            height: 140,
+            width: isMobile() ? 230 : 300,
+            height: isMobile() ? 118 : 140,
             positionType: 'absolute',
-            position: { bottom: 20, left: 20 },
+            position: isMobile() ? { top: 74, left: 12 } : { bottom: 20, left: 20 },
             flexDirection: 'column',
             padding: 12,
             justifyContent: 'space-between'
@@ -139,10 +139,10 @@ const uiComponent = () => {
       {isPiloting && (
         <UiEntity
           uiTransform={{
-            width: 340,
-            height: isMobile() ? 205 : 180,
+            width: isMobile() ? 320 : 340,
+            height: isMobile() ? 246 : 214,
             positionType: 'absolute',
-            position: { bottom: 20, right: 20 },
+            position: { bottom: isMobile() ? 14 : 20, right: isMobile() ? 12 : 20 },
             flexDirection: 'column',
             padding: 12,
             justifyContent: 'space-between'
@@ -182,24 +182,32 @@ const uiComponent = () => {
             value={getGameMode() === 'solo'
               ? '[W/S] Drive | [A/D] Turn | [1] Exit Mech'
               : isMobile()
-              ? 'Drag right side: aim | hold FIRE to shoot | adjust sensitivity below'
+              ? 'DCL joystick: drive/steer | drag upper-right: aim'
               : 'Mouse look: aim | W/S drive | A/D turn | LMB fire | F reload | E repair'}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
             uiTransform={{ height: 16 }}
           />
           {isMobile() && (
-            <UiEntity uiTransform={{ width: '100%', height: 68, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
-              <UiEntity uiTransform={{ width: '100%', height: 38, flexDirection: 'row', justifyContent: 'center' }}>
-                <Button value="FIRE" variant="primary" fontSize={12} uiTransform={{ width: 112, height: 38, margin: 2 }} onMouseDown={requestFire} onMouseUp={stopFire} onMouseLeave={stopFire} />
-                <Button value="RELOAD" variant="secondary" fontSize={11} uiTransform={{ width: 100, height: 34, margin: 2 }} onMouseDown={requestReload} />
-                <Button value="REPAIR" variant="secondary" fontSize={11} uiTransform={{ width: 100, height: 34, margin: 2 }} onMouseDown={requestRepair} />
+            <UiEntity uiTransform={{ width: '100%', height: 98, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
+              <UiEntity uiTransform={{ width: '100%', height: 44, flexDirection: 'row', justifyContent: 'center' }}>
+                <Button value="FIRE" variant="primary" fontSize={13} uiTransform={{ width: 104, height: 42, margin: 2 }} onMouseDown={requestFire} onMouseUp={stopFire} onMouseLeave={stopFire} />
+                <Button value="RELOAD" variant="secondary" fontSize={10} uiTransform={{ width: 84, height: 38, margin: 2 }} onMouseDown={requestReload} />
+                <Button value="REPAIR" variant="secondary" fontSize={10} uiTransform={{ width: 84, height: 38, margin: 2 }} onMouseDown={requestRepair} />
               </UiEntity>
               <UiEntity uiTransform={{ width: '100%', height: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                 <Button value="AIM −" variant="secondary" fontSize={10} uiTransform={{ width: 76, height: 26, margin: 2 }} onMouseDown={() => adjustMobileAimSensitivity(-0.25)} />
                 <Label value={`AIM ${getMobileAimSensitivity().toFixed(2)}x`} fontSize={10} color={Color4.create(0.8, 0.85, 0.9, 1)} uiTransform={{ width: 84, height: 20 }} />
                 <Button value="AIM +" variant="secondary" fontSize={10} uiTransform={{ width: 76, height: 26, margin: 2 }} onMouseDown={() => adjustMobileAimSensitivity(0.25)} />
               </UiEntity>
+              <Button value={`VERTICAL AIM: ${isMobileAimInverted() ? 'INVERTED' : 'NORMAL'}`} variant="secondary" fontSize={9} uiTransform={{ width: 190, height: 24, margin: 2 }} onMouseDown={toggleMobileAimInvertY} />
+            </UiEntity>
+          )}
+          {!isMobile() && (
+            <UiEntity uiTransform={{ width: '100%', height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+              <Button value="AIM −" variant="secondary" fontSize={10} uiTransform={{ width: 78, height: 26, margin: 2 }} onMouseDown={() => adjustDesktopAimSensitivity(-0.25)} />
+              <Label value={`MOUSE AIM ${getDesktopAimSensitivity().toFixed(2)}x`} fontSize={10} color={Color4.create(0.8, 0.85, 0.9, 1)} uiTransform={{ width: 140, height: 20 }} />
+              <Button value="AIM +" variant="secondary" fontSize={10} uiTransform={{ width: 78, height: 26, margin: 2 }} onMouseDown={() => adjustDesktopAimSensitivity(0.25)} />
             </UiEntity>
           )}
         </UiEntity>

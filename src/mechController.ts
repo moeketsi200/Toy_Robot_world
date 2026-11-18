@@ -34,7 +34,7 @@ let repairRequested = false
 const SHOT_COOLDOWN = 0.35
 const AIM_SENSITIVITY = 0.14
 const MOBILE_AIM_SENSITIVITY = 0.08
-const MOBILE_AIM_SMOOTHING = 0.38
+const MOBILE_AIM_SMOOTHING = 0.34
 const MIN_AIM_PITCH = -10
 const MAX_AIM_PITCH = 55
 const MUZZLE_FORWARD_DISTANCE = 2.75
@@ -46,9 +46,13 @@ let lastAimPointer: { x: number; y: number } | undefined
 let smoothedMobileAimX = 0
 let smoothedMobileAimY = 0
 let mobileAimSensitivity = 1
+let desktopAimSensitivity = 1
+let invertMobileAimY = false
 let avatarControlAnchor: Vector3 | undefined
 let avatarMoveAxis = 0
 let avatarTurnAxis = 0
+let smoothedAvatarMoveAxis = 0
+let smoothedAvatarTurnAxis = 0
 let previousPointerLockState: boolean | undefined
 
 /** Queue one weapon shot from the on-screen cockpit button. */
@@ -68,6 +72,22 @@ export function getMobileAimSensitivity(): number {
   return mobileAimSensitivity
 }
 
+export function adjustDesktopAimSensitivity(delta: number): void {
+  desktopAimSensitivity = Math.max(0.5, Math.min(2, desktopAimSensitivity + delta))
+}
+
+export function getDesktopAimSensitivity(): number {
+  return desktopAimSensitivity
+}
+
+export function toggleMobileAimInvertY(): void {
+  invertMobileAimY = !invertMobileAimY
+}
+
+export function isMobileAimInverted(): boolean {
+  return invertMobileAimY
+}
+
 function updateNativeJoystickFromAvatar(): void {
   avatarMoveAxis = 0
   avatarTurnAxis = 0
@@ -84,6 +104,8 @@ function updateNativeJoystickFromAvatar(): void {
   const deadZone = 0.0005
   if (Math.abs(forward) > deadZone) avatarMoveAxis = Math.sign(forward)
   if (Math.abs(lateral) > deadZone) avatarTurnAxis = Math.sign(lateral)
+  smoothedAvatarMoveAxis += (avatarMoveAxis - smoothedAvatarMoveAxis) * 0.55
+  smoothedAvatarTurnAxis += (avatarTurnAxis - smoothedAvatarTurnAxis) * 0.55
   // Keep avatar locomotion from carrying the player away from the mech camera.
   avatar.position = Vector3.clone(avatarControlAnchor)
 }
@@ -195,6 +217,8 @@ export function enterMech() {
   avatarControlAnchor = avatarTransform ? Vector3.clone(avatarTransform.position) : undefined
   avatarMoveAxis = 0
   avatarTurnAxis = 0
+  smoothedAvatarMoveAxis = 0
+  smoothedAvatarTurnAxis = 0
   aimPitch = 4.5
   cameraAimYaw = 0
   const robotClass = ROBOT_CLASSES[selectedClassId]
@@ -328,7 +352,7 @@ export function mechControlSystem(dt: number) {
     const leftPressed = inputSystem.isPressed(InputAction.IA_LEFT)
     const rightPressed = inputSystem.isPressed(InputAction.IA_RIGHT)
     const keyboardTurn = (leftPressed ? -1 : 0) + (rightPressed ? 1 : 0)
-    const turnAxis = isMobile() ? avatarTurnAxis : keyboardTurn
+    const turnAxis = isMobile() ? smoothedAvatarTurnAxis : keyboardTurn
     if (turnAxis < 0) {
       pilot.chassisYaw -= turnSpeed * dt
     }
@@ -343,7 +367,7 @@ export function mechControlSystem(dt: number) {
     const forwardPressed = inputSystem.isPressed(InputAction.IA_FORWARD)
     const backwardPressed = inputSystem.isPressed(InputAction.IA_BACKWARD)
     const keyboardMove = (forwardPressed ? 1 : 0) + (backwardPressed ? -1 : 0)
-    const moveAxis = isMobile() ? avatarMoveAxis : keyboardMove
+    const moveAxis = isMobile() ? smoothedAvatarMoveAxis : keyboardMove
     if (moveAxis > 0) {
       moveDelta += moveSpeed * dt * moveAxis
     }
@@ -501,7 +525,8 @@ function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; cha
     // zone, leaving the left side for movement controls and avoiding HUD taps.
     const position = pointer?.screenCoordinates
     const canvasWidth = UiCanvasInformation.getOrNull(engine.RootEntity)?.width ?? 1920
-    if (position && position.x >= canvasWidth * 0.5) {
+    const canvasHeight = UiCanvasInformation.getOrNull(engine.RootEntity)?.height ?? 1080
+    if (position && position.x >= canvasWidth * 0.5 && position.y <= canvasHeight * 0.72) {
       if (lastAimPointer) {
         deltaX = position.x - lastAimPointer.x
         deltaY = position.y - lastAimPointer.y
@@ -532,9 +557,12 @@ function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; cha
   // SDK touch coordinates run opposite the intended camera yaw on mobile.
   // Keep desktop mouse-look behavior unchanged.
   const aimDirection = isMobile() ? -1 : 1
-  const sensitivity = isMobile() ? MOBILE_AIM_SENSITIVITY * mobileAimSensitivity : AIM_SENSITIVITY
+  const sensitivity = isMobile()
+    ? MOBILE_AIM_SENSITIVITY * mobileAimSensitivity
+    : AIM_SENSITIVITY * desktopAimSensitivity
   cameraAimYaw = normalizeYaw(cameraAimYaw + deltaX * sensitivity * aimDirection)
-  aimPitch = Math.max(MIN_AIM_PITCH, Math.min(MAX_AIM_PITCH, aimPitch + deltaY * sensitivity))
+  const pitchDirection = isMobile() && invertMobileAimY ? -1 : 1
+  aimPitch = Math.max(MIN_AIM_PITCH, Math.min(MAX_AIM_PITCH, aimPitch + deltaY * sensitivity * pitchDirection))
 
   // Aim the camera ray at a distant point, then converge the gun from its muzzle
   // toward that point. This compensates for the third-person camera sitting behind
