@@ -1,7 +1,7 @@
 import { engine } from '@dcl/sdk/ecs'
 import { buildArena } from './arena'
 import { initMech, mechControlSystem } from './mechController'
-import { initSentinelBot, sentinelAiSystem } from './aiBot'
+import { sentinelAiSystem } from './aiBot'
 import { combatSystem } from './combatSystem'
 import { setupUi } from './ui'
 import { networkSystem } from './networkClient'
@@ -15,10 +15,7 @@ export function main() {
   // 2. Initialize Player Mech and Virtual Camera rig
   initMech()
 
-  // 3. Initialize AI Sentinel Bots (local fallback — always active)
-  initSentinelBot()
-
-  // 4. Register Game Systems
+  // 3. Register Game Systems. Solo AI opponents spawn only while piloting in Solo.
   engine.addSystem(mechControlSystem)
   engine.addSystem(sentinelAiSystem)
   engine.addSystem(combatSystem)

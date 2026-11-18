@@ -100,9 +100,6 @@ export function sentinelAiSystem(dt: number) {
     return
   }
 
-  // Recreate the local practice opponents when switching back from multiplayer.
-  if (botEntities.size === 0) initSentinelBot()
-
   // Get player position
   let playerPos: Vector3 | null = null
   let playerIsTargetable = false
@@ -114,6 +111,13 @@ export function sentinelAiSystem(dt: number) {
       playerIsTargetable = true
     }
   }
+
+  // Keep bots out of the mode menu and spawn them only during active Solo play.
+  if (!playerIsTargetable) {
+    removeSentinelBots()
+    return
+  }
+  if (botEntities.size === 0) initSentinelBot()
 
   let index = 0
   for (const [botEnt, bot] of engine.getEntitiesWith(SentinelBot)) {
