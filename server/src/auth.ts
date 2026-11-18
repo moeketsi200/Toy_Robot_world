@@ -28,19 +28,37 @@ export async function authenticateSignedSession(req: IncomingMessage): Promise<s
     throw new Error('Signed request timestamp is invalid or expired')
   }
 
+  // SignedFetch sends the auth chain in numbered headers. Allow additional links so
+  // delegated/scoped identities are not rejected just because they have >3 links.
   const authChain: AuthChain = []
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; ; index++) {
     const value = header(req, `x-identity-auth-chain-${index}`)
-    if (!value) throw new Error('Incomplete Decentraland auth chain')
-    authChain.push(JSON.parse(value))
+    if (!value) break
+    let link: unknown
+    try {
+      link = JSON.parse(value)
+    } catch {
+      throw new Error(`Invalid Decentraland auth chain link ${index}`)
+    }
+    if (!link || typeof link !== 'object' || !('type' in link) || !('payload' in link)) {
+      throw new Error(`Malformed Decentraland auth chain link ${index}`)
+    }
+    authChain.push(link as AuthChain[number])
   }
 
+  if (authChain.length < 2) throw new Error('Incomplete Decentraland auth chain')
+
+  const signedRequest = authChain[authChain.length - 1]
   const expectedPayload = `post:/auth/session:${timestampHeader}:${metadata}`.toLowerCase()
-  if (authChain[2].payload.toLowerCase() !== expectedPayload) throw new Error('Signed request does not match this endpoint')
+  if (typeof signedRequest.payload !== 'string' || signedRequest.payload.toLowerCase() !== expectedPayload) {
+    throw new Error(`Signed request does not match this endpoint (received ${String(signedRequest.payload)})`)
+  }
 
   const wallet = Authenticator.ownerAddress(authChain).toLowerCase()
-  const validation = await Authenticator.validateSignature(wallet, authChain, undefined, Date.now())
-  if (!validation.ok) throw new Error('Decentraland identity signature is invalid')
+  // A SignedFetch chain terminates at the signed request payload, not at the
+  // wallet address. Validate the chain against that final payload.
+  const validation = await Authenticator.validateSignature(expectedPayload, authChain, undefined, Date.now())
+  if (!validation.ok) throw new Error(validation.message ?? 'Decentraland identity signature is invalid')
   return wallet
 }
 
