@@ -13,6 +13,7 @@ export function combatSystem(dt: number) {
 
     // Advance laser position
     transform.position.x += laser.dirX * laser.speed * dt
+    transform.position.y += laser.dirY * laser.speed * dt
     transform.position.z += laser.dirZ * laser.speed * dt
 
     const mutLaser = LaserProjectile.getMutable(entity)
@@ -22,7 +23,7 @@ export function combatSystem(dt: number) {
 
     // 1. Collision with Obstacles
     for (const [_, obs] of engine.getEntitiesWith(Obstacle)) {
-      if (transform.position.x >= obs.minX && transform.position.x <= obs.maxX &&
+      if (transform.position.y <= 5.5 && transform.position.x >= obs.minX && transform.position.x <= obs.maxX &&
           transform.position.z >= obs.minZ && transform.position.z <= obs.maxZ) {
         removeLaser = true
         break
@@ -34,7 +35,7 @@ export function combatSystem(dt: number) {
       for (const [botEnt, bot] of engine.getEntitiesWith(SentinelBot)) {
         if (bot.isAlive) {
           const botPos = Transform.get(botEnt).position
-          const dist = Math.hypot(transform.position.x - botPos.x, transform.position.z - botPos.z)
+          const dist = Math.hypot(transform.position.x - botPos.x, transform.position.y - (botPos.y + 2.7), transform.position.z - botPos.z)
           if (dist < 2.2) {
             removeLaser = true
             const pilot = playerMechEntity ? MechPilot.getOrNull(playerMechEntity) : null
@@ -51,7 +52,7 @@ export function combatSystem(dt: number) {
       const pilot = MechPilot.getMutableOrNull(playerMechEntity)
       if (pilot && pilot.isPiloting && pilot.state !== MechStateEnum.FALLING) {
         const playerPos = Transform.get(playerMechEntity).position
-        const dist = Math.hypot(transform.position.x - playerPos.x, transform.position.z - playerPos.z)
+        const dist = Math.hypot(transform.position.x - playerPos.x, transform.position.y - (playerPos.y + 2.7), transform.position.z - playerPos.z)
         if (dist < 1.8) {
           removeLaser = true
           pilot.shields = Math.max(0, pilot.shields - laser.damage)

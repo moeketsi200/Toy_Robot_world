@@ -51,7 +51,10 @@ const BOTS_CONFIG: BotConfig[] = [
 ]
 
 const botLabelMap = new Map<Entity, Entity>()
+const botTurretMap = new Map<Entity, Entity>()
 const botEntities = new Set<Entity>()
+const BOT_MUZZLE_FORWARD = 2.75
+const BOT_MUZZLE_HEIGHT = 2.7
 
 export function initSentinelBot() {
   if (botEntities.size > 0) return
@@ -63,7 +66,17 @@ export function initSentinelBot() {
       scale: Vector3.create(1, 1, 1)
     })
     GltfContainer.create(botEnt, {
-      src: 'assets/models/mech_bastion.glb'
+      src: 'assets/models/mech_bastion_chassis.glb'
+    })
+
+    const turretEnt = engine.addEntity()
+    Transform.create(turretEnt, {
+      position: Vector3.create(0, 0, 0),
+      rotation: Quaternion.fromEulerDegrees(0, 180, 0),
+      parent: botEnt
+    })
+    GltfContainer.create(turretEnt, {
+      src: 'assets/models/mech_bastion_turret.glb'
     })
 
     SentinelBot.create(botEnt, {
@@ -90,6 +103,7 @@ export function initSentinelBot() {
     })
 
     botLabelMap.set(botEnt, labelEnt)
+    botTurretMap.set(botEnt, turretEnt)
     botEntities.add(botEnt)
   }
 }
@@ -151,7 +165,8 @@ export function sentinelAiSystem(dt: number) {
       const dx = playerPos.x - botTransform.position.x
       const dz = playerPos.z - botTransform.position.z
       const angleRad = Math.atan2(dx, dz)
-      botTransform.rotation = Quaternion.fromEulerDegrees(0, (angleRad * 180) / Math.PI, 0)
+      botTransform.rotation = Quaternion.fromEulerDegrees(0, (angleRad * 180) / Math.PI + 180, 0)
+      aimBotTurret(botEnt)
 
       // Shoot countdown
       mutBot.shootCooldown -= dt
@@ -159,7 +174,15 @@ export function sentinelAiSystem(dt: number) {
         mutBot.shootCooldown = 3.0 + Math.random() * 0.8
         const dirX = Math.sin(angleRad)
         const dirZ = Math.cos(angleRad)
-        spawnLaserBeam(botTransform.position.x, botTransform.position.y + 1.25, botTransform.position.z, dirX, dirZ, false)
+        spawnLaserBeam(
+          botTransform.position.x + dirX * BOT_MUZZLE_FORWARD,
+          botTransform.position.y + BOT_MUZZLE_HEIGHT,
+          botTransform.position.z + dirZ * BOT_MUZZLE_FORWARD,
+          dirX,
+          0,
+          dirZ,
+          false
+        )
       }
     } else {
       // Patrol waypoints
@@ -172,7 +195,8 @@ export function sentinelAiSystem(dt: number) {
         mutBot.patrolIndex = (mutBot.patrolIndex + 1) % config.waypoints.length
       } else {
         const angleRad = Math.atan2(dx, dz)
-        botTransform.rotation = Quaternion.fromEulerDegrees(0, (angleRad * 180) / Math.PI, 0)
+        botTransform.rotation = Quaternion.fromEulerDegrees(0, (angleRad * 180) / Math.PI + 180, 0)
+        aimBotTurret(botEnt)
 
         const patrolSpeed = 4.2
         botTransform.position.x += Math.sin(angleRad) * patrolSpeed * dt
@@ -186,10 +210,19 @@ function removeSentinelBots(): void {
   for (const botEnt of botEntities) {
     const labelEnt = botLabelMap.get(botEnt)
     if (labelEnt !== undefined) engine.removeEntity(labelEnt)
+    const turretEnt = botTurretMap.get(botEnt)
+    if (turretEnt !== undefined) engine.removeEntity(turretEnt)
     engine.removeEntity(botEnt)
     botLabelMap.delete(botEnt)
+    botTurretMap.delete(botEnt)
   }
   botEntities.clear()
+}
+
+function aimBotTurret(botEnt: Entity): void {
+  const turret = botTurretMap.get(botEnt)
+  if (turret === undefined) return
+  Transform.getMutable(turret).rotation = Quaternion.fromEulerDegrees(0, 0, 0)
 }
 
 export function damageBot(botEnt: Entity, damage: number) {

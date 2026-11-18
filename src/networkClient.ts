@@ -36,11 +36,13 @@ let connectionMessage = 'Not connected to the multiplayer server.'
 let pendingMoveDir: number = 0
 let pendingTurnDir: number = 0
 let pendingTurretYaw: number = 0
+let pendingTurretPitch: number = 4.5
 
 let inputSendTimer = 0
 
 /** Map of remote robot entity IDs (string) → DCL entity */
 const remoteRobotEntities = new Map<string, Entity>()
+const remoteTurretEntities = new Map<string, Entity>()
 const remoteRobotLabels = new Map<string, Entity>()
 const shotEffects: Array<{ entity: Entity; remaining: number }> = []
 
@@ -77,10 +79,11 @@ export function initNetworkClient(): void {
 }
 
 /** Update pending input (called every frame from mechControlSystem) */
-export function netSendInput(moveDir: number, turnDir: number, turretYaw: number): void {
+export function netSendInput(moveDir: number, turnDir: number, turretYaw: number, turretPitch: number): void {
   pendingMoveDir = moveDir
   pendingTurnDir = turnDir
   pendingTurretYaw = turretYaw
+  pendingTurretPitch = turretPitch
 }
 
 /** Send a one-shot action packet immediately */
@@ -142,7 +145,8 @@ export function networkSystem(dt: number): void {
         payload: {
           moveDir: pendingMoveDir,
           turnDir: pendingTurnDir,
-          turretYaw: pendingTurretYaw
+          turretYaw: pendingTurretYaw,
+          turretPitch: pendingTurretPitch
         }
       }))
     }
@@ -250,9 +254,10 @@ function reconcileWorld(robots: RobotState[]): void {
   const seenIds = new Set<string>()
 
   for (const robot of robots) {
-    // Skip our own robot — we drive it locally
+  // Skip snapshots for our own robot outside the war; the local hangar mech
+  // should not be pulled toward the server spawn position.
     if (robot.id === myRobotId) {
-      reconcileLocalRobot(robot)
+      if (isInWar) reconcileLocalRobot(robot)
       continue
     }
 
@@ -273,6 +278,9 @@ function reconcileWorld(robots: RobotState[]): void {
       const label = remoteRobotLabels.get(id)
       if (label !== undefined) engine.removeEntity(label)
       remoteRobotLabels.delete(id)
+      const turret = remoteTurretEntities.get(id)
+      if (turret !== undefined) engine.removeEntity(turret)
+      remoteTurretEntities.delete(id)
       console.log('[Net] Robot left:', id)
     }
   }
@@ -280,8 +288,10 @@ function reconcileWorld(robots: RobotState[]): void {
 
 function clearRemoteRobots(): void {
   for (const entity of remoteRobotEntities.values()) engine.removeEntity(entity)
+  for (const entity of remoteTurretEntities.values()) engine.removeEntity(entity)
   for (const entity of remoteRobotLabels.values()) engine.removeEntity(entity)
   remoteRobotEntities.clear()
+  remoteTurretEntities.clear()
   remoteRobotLabels.clear()
 }
 
@@ -291,14 +301,20 @@ function reconcileLocalRobot(robot: RobotState): void {
   if (!pilot || !pilot.isPiloting) return
 
   const transform = Transform.getMutable(playerMechEntity)
-  const smoothing = 0.45
-  transform.position.x += (robot.x - transform.position.x) * smoothing
-  transform.position.z += (robot.z - transform.position.z) * smoothing
+  // Small server drift corrections are eased in; large errors (respawn or a
+  // collision divergence) snap so the client does not spend seconds catching up.
+  const dx = robot.x - transform.position.x
+  const dz = robot.z - transform.position.z
+  const error = Math.hypot(dx, dz)
+  const smoothing = error > 1.5 ? 1 : 0.12
+  transform.position.x += dx * smoothing
+  transform.position.z += dz * smoothing
   transform.position.y = robot.state === 'DESTROYED' ? -100 : 0.1
-  transform.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw, 0)
+  transform.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw + 180, 0)
   pilot.classId = robot.classId
   pilot.chassisYaw = robot.chassisYaw
   pilot.turretYaw = robot.turretYaw
+  pilot.turretPitch = robot.turretPitch ?? 0
   pilot.shields = robot.shields
   pilot.maxShields = robot.maxShields
   pilot.ammo = robot.ammo
@@ -318,17 +334,25 @@ function spawnRemoteRobot(robot: RobotState): void {
   const ent = engine.addEntity()
   Transform.create(ent, {
     position: Vector3.create(robot.x, 0.1, robot.z),
-    rotation: Quaternion.fromEulerDegrees(0, robot.chassisYaw, 0),
+    rotation: Quaternion.fromEulerDegrees(0, robot.chassisYaw + 180, 0),
     scale: Vector3.create(1, 1, 1)
   })
 
   if (robot.isBot) {
     // AI bot — use a red tinted placeholder mesh until we have a second GLB
-    GltfContainer.create(ent, { src: 'assets/models/mech_bastion.glb' })
+    GltfContainer.create(ent, { src: 'assets/models/mech_bastion_chassis.glb' })
   } else {
     // Human player — use the same mech but we could tint it differently
-    GltfContainer.create(ent, { src: 'assets/models/mech_bastion.glb' })
+    GltfContainer.create(ent, { src: 'assets/models/mech_bastion_chassis.glb' })
   }
+
+  const turret = engine.addEntity()
+  Transform.create(turret, {
+    position: Vector3.create(0, 0, 0),
+    rotation: Quaternion.fromEulerDegrees(robot.turretPitch ?? 0, remoteTurretYaw(robot), 0),
+    parent: ent
+  })
+  GltfContainer.create(turret, { src: 'assets/models/mech_bastion_turret.glb' })
 
   const label = engine.addEntity()
   Transform.create(label, {
@@ -343,6 +367,7 @@ function spawnRemoteRobot(robot: RobotState): void {
   })
 
   remoteRobotEntities.set(robot.id, ent)
+  remoteTurretEntities.set(robot.id, turret)
   remoteRobotLabels.set(robot.id, label)
   console.log('[Net] Robot joined:', robot.id, robot.isBot ? '(bot)' : '(player)')
 }
@@ -364,11 +389,21 @@ function updateRemoteRobot(robot: RobotState): void {
 
   t.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw, 0)
 
+  const turret = remoteTurretEntities.get(robot.id)
+  if (turret !== undefined) {
+    Transform.getMutable(turret).rotation = Quaternion.fromEulerDegrees(robot.turretPitch ?? 0, remoteTurretYaw(robot), 0)
+  }
+
   const label = remoteRobotLabels.get(robot.id)
   if (label !== undefined) {
     const text = TextShape.getMutableOrNull(label)
     if (text) text.text = remoteShieldText(robot)
   }
+}
+
+function remoteTurretYaw(robot: RobotState): number {
+  const relativeYaw = robot.turretYaw - robot.chassisYaw
+  return ((relativeYaw % 360) + 360) % 360
 }
 
 function processEvents(events: GameEvent[]): void {
@@ -393,15 +428,20 @@ function remoteShieldText(robot: RobotState): string {
 
 function spawnNetworkShot(from: [number, number, number], to: [number, number, number], isPlayerShot: boolean): void {
   const dx = to[0] - from[0]
+  const dy = to[1] - from[1]
   const dz = to[2] - from[2]
-  const length = Math.hypot(dx, dz)
+  const length = Math.hypot(dx, dy, dz)
   if (length < 0.1) return
 
   const beam = engine.addEntity()
   Transform.create(beam, {
     position: Vector3.create((from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2),
     scale: Vector3.create(0.1, 0.1, length),
-    rotation: Quaternion.fromEulerDegrees(0, (Math.atan2(dx, dz) * 180) / Math.PI, 0)
+    rotation: Quaternion.fromEulerDegrees(
+      (Math.atan2(-dy, Math.hypot(dx, dz)) * 180) / Math.PI,
+      (Math.atan2(dx, dz) * 180) / Math.PI,
+      0
+    )
   })
   MeshRenderer.setCylinder(beam)
   Material.setPbrMaterial(beam, {

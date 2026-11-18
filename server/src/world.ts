@@ -16,7 +16,7 @@ interface PitCollider {
 export class GameWorld {
   private tickCount = 0
   public robots = new Map<string, RobotState>()
-  private clientInputs = new Map<string, { moveDir: number; turnDir: number; turretYaw: number }>()
+  private clientInputs = new Map<string, { moveDir: number; turnDir: number; turretYaw: number; turretPitch: number }>()
   private lastFireAt = new Map<string, number>()
   private unlockedRobots = new Map<string, Set<RobotClassId>>()
   private classLocked = new Set<string>()
@@ -74,6 +74,7 @@ export class GameWorld {
       z: 14 + (Math.random() - 0.5) * 4,
       chassisYaw: 0,
       turretYaw: 0,
+      turretPitch: 4.5,
       shields: robotClass.maxShields,
       maxShields: robotClass.maxShields,
       ammo: robotClass.maxAmmo,
@@ -85,7 +86,7 @@ export class GameWorld {
       deaths: 0
     }
     this.robots.set(robotId, robot)
-    this.clientInputs.set(robotId, { moveDir: 0, turnDir: 0, turretYaw: 0 })
+    this.clientInputs.set(robotId, { moveDir: 0, turnDir: 0, turretYaw: 0, turretPitch: 4.5 })
     console.log(`[WORLD] Registered new player: ${robot.name} (${robotId})`)
     return robot
   }
@@ -116,6 +117,7 @@ export class GameWorld {
         inputs.moveDir = Math.max(-1, Math.min(1, cmd.payload.moveDir))
         inputs.turnDir = Math.max(-1, Math.min(1, cmd.payload.turnDir))
         inputs.turretYaw = ((cmd.payload.turretYaw % 360) + 360) % 360
+        inputs.turretPitch = Math.max(-10, Math.min(55, cmd.payload.turretPitch ?? 0))
       }
     } else if (cmd.type === 'ACTION') {
       this.classLocked.add(robot.id)
@@ -171,24 +173,42 @@ export class GameWorld {
   private processLaserFire(shooter: RobotState, offsetDegrees = 0) {
     const shooterClass = ROBOT_CLASSES[shooter.classId]
     const rad = ((shooter.turretYaw + offsetDegrees) * Math.PI) / 180
-    const dirX = Math.sin(rad)
-    const dirZ = Math.cos(rad)
+    const pitchRad = ((shooter.turretPitch ?? 0) * Math.PI) / 180
+    const horizontalScale = Math.cos(pitchRad)
+    const dirX = Math.sin(rad) * horizontalScale
+    const dirY = -Math.sin(pitchRad)
+    const dirZ = Math.cos(rad) * horizontalScale
 
-    const origin: [number, number, number] = [shooter.x, 1.25, shooter.z]
-    let impactX = shooter.x + dirX * shooterClass.range
-    let impactZ = shooter.z + dirZ * shooterClass.range
+    const muzzleForward = 2.75
+    const rayDistance = shooterClass.range - muzzleForward
+    const originX = shooter.x + dirX * muzzleForward
+    const originZ = shooter.z + dirZ * muzzleForward
+    const originY = 2.8 + dirY * muzzleForward
+    const origin: [number, number, number] = [originX, originY, originZ]
+    let impactX = originX + dirX * rayDistance
+    let impactY = originY + dirY * rayDistance
+    let impactZ = originZ + dirZ * rayDistance
     let hitTarget: RobotState | null = null
 
     // Raycast check: Step forward along ray in 0.5m increments
-    for (let d = 1.0; d < shooterClass.range; d += 0.5) {
-      const cx = shooter.x + dirX * d
-      const cz = shooter.z + dirZ * d
+    for (let d = 0; d <= rayDistance; d += 0.5) {
+      const cx = originX + dirX * d
+      const cy = originY + dirY * d
+      const cz = originZ + dirZ * d
+
+      if (cy <= 0.2) {
+        impactX = cx
+        impactY = Math.max(0, cy)
+        impactZ = cz
+        break
+      }
 
       // Check Obstacles
       let blocked = false
       for (const obs of this.obstacles) {
-        if (cx >= obs.minX && cx <= obs.maxX && cz >= obs.minZ && cz <= obs.maxZ) {
+        if (cy <= 5.5 && cx >= obs.minX && cx <= obs.maxX && cz >= obs.minZ && cz <= obs.maxZ) {
           impactX = cx
+          impactY = cy
           impactZ = cz
           blocked = true
           break
@@ -199,10 +219,13 @@ export class GameWorld {
       // Check Enemy Robots
       for (const [id, target] of this.robots) {
         if (id === shooter.id || target.state === 'FALLING' || target.state === 'DESTROYED') continue
-        const dist = Math.hypot(cx - target.x, cz - target.z)
-        const falloff = shooterClass.shotStyle === 'scatter' ? Math.max(0.35, 1 - d / shooterClass.range) : 1
+        const dist = Math.hypot(cx - target.x, cy - 2.8, cz - target.z)
+        const falloff = shooterClass.shotStyle === 'scatter'
+          ? Math.max(0.35, 1 - (d + muzzleForward) / shooterClass.range)
+          : 1
         if (dist < (shooterClass.shotStyle === 'scatter' ? 2.5 : 1.8)) {
           impactX = cx
+          impactY = cy
           impactZ = cz
           hitTarget = target
           const damage = (shooterClass.shotStyle === 'burst' ? 0.5 : shooterClass.shotStyle === 'scatter' ? shooterClass.damage / 3 : shooterClass.damage) * falloff
@@ -241,7 +264,7 @@ export class GameWorld {
       type: 'LASER_FIRED',
       shooterId: shooter.id,
       from: origin,
-      to: [impactX, 1.25, impactZ],
+      to: [impactX, impactY, impactZ],
       targetId: hitTarget?.id,
       damage: hitTarget ? shooterClass.damage : 0
     }
@@ -302,6 +325,7 @@ export class GameWorld {
           robot.chassisYaw += input.turnDir * robotClass.turnSpeed * dt
           robot.chassisYaw = ((robot.chassisYaw % 360) + 360) % 360
           robot.turretYaw = input.turretYaw
+          robot.turretPitch = input.turretPitch
 
           // Move
           if (input.moveDir !== 0) {
@@ -365,6 +389,7 @@ export class GameWorld {
       z: z,
       chassisYaw: 180,
       turretYaw: 180,
+      turretPitch: 0,
       shields: 5,
       maxShields: 5,
       ammo: 999,

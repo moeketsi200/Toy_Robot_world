@@ -69,6 +69,7 @@ export interface RobotState {
   z: number
   chassisYaw: number
   turretYaw: number
+  turretPitch?: number
   shields: number
   maxShields: number
   ammo: number
@@ -105,6 +106,7 @@ export interface InputCommand {
     moveDir: number
     turnDir: number
     turretYaw: number
+    turretPitch?: number
   }
 }
 
@@ -162,5 +164,7 @@ export function isClientCommand(value: unknown): value is ClientCommand {
   if (command.type === 'ACTION') {
     return payload.action === 'fire' || payload.action === 'reload' || payload.action === 'repair' || payload.action === 'dash'
   }
-  return typeof payload.moveDir === 'number' && typeof payload.turnDir === 'number' && typeof payload.turretYaw === 'number'
+  return typeof payload.moveDir === 'number' && typeof payload.turnDir === 'number' &&
+    typeof payload.turretYaw === 'number' &&
+    (payload.turretPitch === undefined || (typeof payload.turretPitch === 'number' && Number.isFinite(payload.turretPitch)))
 }

@@ -3,7 +3,7 @@ import { Color4 } from '@dcl/sdk/math'
 import ReactEcs, { Button, Input, Label, ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs'
 import { isMobile } from '@dcl/sdk/platform'
 import { MechPilot, MechStateEnum } from './components'
-import { playerMechEntity, enterMech, exitMech, requestFire, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition } from './mechController'
+import { playerMechEntity, enterMech, exitMech, requestFire, stopFire, requestReload, requestRepair, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition, adjustMobileAimSensitivity, getMobileAimSensitivity } from './mechController'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { GameMode, getGameMode, modeLabel } from './gameMode'
 import { getNetworkMessage, initNetworkClient, isMultiplayerConnected, isNetworkConnecting } from './networkClient'
@@ -140,7 +140,7 @@ const uiComponent = () => {
         <UiEntity
           uiTransform={{
             width: 340,
-            height: 160,
+            height: isMobile() ? 205 : 180,
             positionType: 'absolute',
             position: { bottom: 20, right: 20 },
             flexDirection: 'column',
@@ -167,13 +167,13 @@ const uiComponent = () => {
             uiTransform={{ height: 16 }}
           />
           <Label
-            value={`[E] Reload Ammo (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].reloadTime.toFixed(1)}s)`}
+            value={`[F] Reload Ammo (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].reloadTime.toFixed(1)}s)`}
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
           />
           <Label
-            value="[F] Repair Shields (4.5s Immobilized)"
+            value="[E] Repair Shields (immobilized while repairing)"
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
@@ -182,23 +182,30 @@ const uiComponent = () => {
             value={getGameMode() === 'solo'
               ? '[W/S] Drive | [A/D] Turn | [1] Exit Mech'
               : isMobile()
-                ? 'Left stick: drive | Drag right side: aim'
-                : 'W/S drive | A/D turn | Mouse aim'}
+              ? 'Drag right side: aim | hold FIRE to shoot | adjust sensitivity below'
+              : 'Mouse look: aim | W/S drive | A/D turn | LMB fire | F reload | E repair'}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
             uiTransform={{ height: 16 }}
           />
           {isMobile() && (
-            <Button
-              value="FIRE"
-              variant="primary"
-              fontSize={13}
-              uiTransform={{ width: 150, height: 34, alignSelf: 'center', margin: 2 }}
-              onMouseDown={requestFire}
-            />
+            <UiEntity uiTransform={{ width: '100%', height: 68, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
+              <UiEntity uiTransform={{ width: '100%', height: 38, flexDirection: 'row', justifyContent: 'center' }}>
+                <Button value="FIRE" variant="primary" fontSize={12} uiTransform={{ width: 112, height: 38, margin: 2 }} onMouseDown={requestFire} onMouseUp={stopFire} onMouseLeave={stopFire} />
+                <Button value="RELOAD" variant="secondary" fontSize={11} uiTransform={{ width: 100, height: 34, margin: 2 }} onMouseDown={requestReload} />
+                <Button value="REPAIR" variant="secondary" fontSize={11} uiTransform={{ width: 100, height: 34, margin: 2 }} onMouseDown={requestRepair} />
+              </UiEntity>
+              <UiEntity uiTransform={{ width: '100%', height: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Button value="AIM −" variant="secondary" fontSize={10} uiTransform={{ width: 76, height: 26, margin: 2 }} onMouseDown={() => adjustMobileAimSensitivity(-0.25)} />
+                <Label value={`AIM ${getMobileAimSensitivity().toFixed(2)}x`} fontSize={10} color={Color4.create(0.8, 0.85, 0.9, 1)} uiTransform={{ width: 84, height: 20 }} />
+                <Button value="AIM +" variant="secondary" fontSize={10} uiTransform={{ width: 76, height: 26, margin: 2 }} onMouseDown={() => adjustMobileAimSensitivity(0.25)} />
+              </UiEntity>
+            </UiEntity>
           )}
         </UiEntity>
       )}
+
+
 
       {/* 5. Non-piloting quick start button for testing */}
       {!isPiloting && (

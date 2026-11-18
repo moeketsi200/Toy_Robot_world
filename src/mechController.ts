@@ -6,11 +6,13 @@ import {
   VirtualCamera,
   MainCamera,
   InputModifier,
+  PointerLock,
   inputSystem,
   InputAction,
   PointerEventType,
   PrimaryPointerInfo,
   UiCanvasInformation,
+  TouchScreenControls,
   MeshRenderer,
   Material
 } from '@dcl/sdk/ecs'
@@ -23,34 +25,87 @@ import { canUseRobotInMode, getGameMode, GameMode, setGameMode } from './gameMod
 
 export let playerMechEntity: Entity | null = null
 export let mechCameraEntity: Entity | null = null
+export let playerTurretEntity: Entity | null = null
 
 let lastShotTime = 0
 let fireRequested = false
+let reloadRequested = false
+let repairRequested = false
 const SHOT_COOLDOWN = 0.35
-const MOBILE_AIM_SENSITIVITY = 0.14
+const AIM_SENSITIVITY = 0.14
+const MOBILE_AIM_SENSITIVITY = 0.08
+const MOBILE_AIM_SMOOTHING = 0.38
+const MIN_AIM_PITCH = -10
+const MAX_AIM_PITCH = 55
+const MUZZLE_FORWARD_DISTANCE = 2.75
+const MUZZLE_HEIGHT = 2.7
 let selectedClassId: RobotClassId = 'bastion'
-let lastMobileAimX: number | undefined
+let aimPitch = 4.5
+let cameraAimYaw = 0
+let lastAimPointer: { x: number; y: number } | undefined
+let smoothedMobileAimX = 0
+let smoothedMobileAimY = 0
+let mobileAimSensitivity = 1
+let avatarControlAnchor: Vector3 | undefined
+let avatarMoveAxis = 0
+let avatarTurnAxis = 0
+let previousPointerLockState: boolean | undefined
 
 /** Queue one weapon shot from the on-screen cockpit button. */
 export function requestFire(): void {
   fireRequested = true
 }
 
+export function stopFire(): void {
+  fireRequested = false
+}
+
+export function adjustMobileAimSensitivity(delta: number): void {
+  mobileAimSensitivity = Math.max(0.5, Math.min(2, mobileAimSensitivity + delta))
+}
+
+export function getMobileAimSensitivity(): number {
+  return mobileAimSensitivity
+}
+
+function updateNativeJoystickFromAvatar(): void {
+  avatarMoveAxis = 0
+  avatarTurnAxis = 0
+  if (!isMobile() || !avatarControlAnchor || !playerMechEntity) return
+  const avatar = Transform.getMutableOrNull(engine.PlayerEntity)
+  if (!avatar) return
+  const dx = avatar.position.x - avatarControlAnchor.x
+  const dz = avatar.position.z - avatarControlAnchor.z
+  const yaw = (MechPilot.getOrNull(playerMechEntity)?.chassisYaw ?? 0) * Math.PI / 180
+  const forwardX = Math.sin(yaw)
+  const forwardZ = Math.cos(yaw)
+  const forward = dx * forwardX + dz * forwardZ
+  const lateral = dx * forwardZ - dz * forwardX
+  const deadZone = 0.0005
+  if (Math.abs(forward) > deadZone) avatarMoveAxis = Math.sign(forward)
+  if (Math.abs(lateral) > deadZone) avatarTurnAxis = Math.sign(lateral)
+  // Keep avatar locomotion from carrying the player away from the mech camera.
+  avatar.position = Vector3.clone(avatarControlAnchor)
+}
+
+export function requestReload(): void {
+  reloadRequested = true
+}
+
+export function requestRepair(): void {
+  repairRequested = true
+}
+
 export function getSelectedClassId(): RobotClassId {
   return selectedClassId
 }
 
-/** Position the reticle under the desktop mouse, or at screen center on mobile. */
+/** Keep the aiming reticle fixed in the center of the view on every platform. */
 export function getAimReticlePosition(): { left: number; top: number } {
   const canvas = UiCanvasInformation.getOrNull(engine.RootEntity)
   const canvasWidth = canvas?.width ?? 1920
   const canvasHeight = canvas?.height ?? 1080
-  const pointerPosition = !isMobile() && getGameMode() !== 'solo'
-    ? PrimaryPointerInfo.getOrNull(engine.RootEntity)?.screenCoordinates
-    : undefined
-  return pointerPosition
-    ? { left: pointerPosition.x, top: pointerPosition.y }
-    : { left: canvasWidth / 2, top: canvasHeight / 2 }
+  return { left: canvasWidth / 2, top: canvasHeight / 2 }
 }
 
 export function selectRobotClass(classId: RobotClassId): boolean {
@@ -80,7 +135,17 @@ export function initMech() {
     scale: Vector3.create(1, 1, 1)
   })
   GltfContainer.create(playerMechEntity, {
-    src: 'assets/models/mech_bastion.glb'
+    src: 'assets/models/mech_bastion_chassis.glb'
+  })
+
+  playerTurretEntity = engine.addEntity()
+  Transform.create(playerTurretEntity, {
+    position: Vector3.create(0, 0, 0),
+    rotation: Quaternion.fromEulerDegrees(0, 180, 0),
+    parent: playerMechEntity
+  })
+  GltfContainer.create(playerTurretEntity, {
+    src: 'assets/models/mech_bastion_turret.glb'
   })
 
   MechPilot.create(playerMechEntity, {
@@ -88,6 +153,7 @@ export function initMech() {
     classId: 'bastion',
     chassisYaw: 0,
     turretYaw: 0,
+    turretPitch: 4.5,
     shields: 6,
     maxShields: 6,
     ammo: 8,
@@ -99,11 +165,12 @@ export function initMech() {
     deaths: 0
   })
 
-  // Create VirtualCamera attached behind the mech
+  // The GLB faces local -Z while gameplay forward is +Z. Parent rotation below
+  // turns the model to face gameplay-forward, so +Z here is behind the robot.
   mechCameraEntity = engine.addEntity()
   Transform.create(mechCameraEntity, {
-    position: Vector3.create(0, 3.2, -6.5),
-    rotation: Quaternion.fromEulerDegrees(14, 0, 0),
+    position: Vector3.create(0, 3.2, 6.5),
+    rotation: Quaternion.fromEulerDegrees(14, 180, 0),
     parent: playerMechEntity
   })
   VirtualCamera.create(mechCameraEntity, {
@@ -119,7 +186,17 @@ export function enterMech() {
 
   const pilot = MechPilot.getMutable(playerMechEntity)
   fireRequested = false
-  lastMobileAimX = undefined
+  reloadRequested = false
+  repairRequested = false
+  lastAimPointer = undefined
+  smoothedMobileAimX = 0
+  smoothedMobileAimY = 0
+  const avatarTransform = Transform.getOrNull(engine.PlayerEntity)
+  avatarControlAnchor = avatarTransform ? Vector3.clone(avatarTransform.position) : undefined
+  avatarMoveAxis = 0
+  avatarTurnAxis = 0
+  aimPitch = 4.5
+  cameraAimYaw = 0
   const robotClass = ROBOT_CLASSES[selectedClassId]
   pilot.isPiloting = true
   pilot.classId = selectedClassId
@@ -132,26 +209,36 @@ export function enterMech() {
   pilot.dashCooldown = 0
   pilot.chassisYaw = 0
   pilot.turretYaw = 0
-  Transform.getMutable(mechCameraEntity).rotation = Quaternion.fromEulerDegrees(14, 0, 0)
+  pilot.turretPitch = aimPitch
+  updateTurretVisual(pilot.turretYaw, pilot.chassisYaw, pilot.turretPitch)
+  Transform.getMutable(mechCameraEntity).rotation = Quaternion.fromEulerDegrees(aimPitch, 180, 0)
+  if (isMobile()) {
+    TouchScreenControls.showJoystick()
+    TouchScreenControls.showCrosshair()
+  }
 
   // Spawn mech at arena start position
   Transform.getMutable(playerMechEntity).position = Vector3.create(32, 0.1, 14)
-  Transform.getMutable(playerMechEntity).rotation = Quaternion.fromEulerDegrees(0, 0, 0)
+  Transform.getMutable(playerMechEntity).rotation = Quaternion.fromEulerDegrees(0, 180, 0)
 
   // Activate virtual camera
   MainCamera.createOrReplace(engine.CameraEntity, {
     virtualCameraEntity: mechCameraEntity
   })
+  if (!isMobile()) {
+    previousPointerLockState = PointerLock.getOrNull(engine.CameraEntity)?.isPointerLocked ?? false
+    PointerLock.createOrReplace(engine.CameraEntity, { isPointerLocked: true })
+  }
 
   // Lock default avatar locomotion
-  InputModifier.createOrReplace(engine.PlayerEntity, {
-    mode: {
-      $case: 'standard',
-      standard: {
-        disableAll: true
+  if (!isMobile()) {
+    InputModifier.createOrReplace(engine.PlayerEntity, {
+      mode: {
+        $case: 'standard',
+        standard: { disableAll: true }
       }
-    }
-  })
+    })
+  }
 
   if (getGameMode() === 'multiplayer') netJoinWar(selectedClassId)
 
@@ -163,7 +250,12 @@ export function exitMech() {
 
   const pilot = MechPilot.getMutable(playerMechEntity)
   fireRequested = false
-  lastMobileAimX = undefined
+  reloadRequested = false
+  repairRequested = false
+  lastAimPointer = undefined
+  avatarControlAnchor = undefined
+  avatarMoveAxis = 0
+  avatarTurnAxis = 0
   pilot.isPiloting = false
   pilot.state = MechStateEnum.NORMAL
 
@@ -174,6 +266,10 @@ export function exitMech() {
 
   // Restore camera & player locomotion
   MainCamera.deleteFrom(engine.CameraEntity)
+  if (previousPointerLockState !== undefined && PointerLock.has(engine.CameraEntity)) {
+    PointerLock.getMutable(engine.CameraEntity).isPointerLocked = previousPointerLockState
+    previousPointerLockState = undefined
+  }
   InputModifier.deleteFrom(engine.PlayerEntity)
   console.log('Player exited mech, returned to Hangar.')
 }
@@ -184,6 +280,7 @@ export function mechControlSystem(dt: number) {
   if (!pilot || !pilot.isPiloting) return
 
   const transform = Transform.getMutable(playerMechEntity)
+  updateNativeJoystickFromAvatar()
   const robotClass = ROBOT_CLASSES[pilot.classId as RobotClassId] ?? ROBOT_CLASSES.bastion
   const serverAuthoritative = getGameMode() === 'multiplayer' && isMultiplayerConnected()
 
@@ -228,26 +325,32 @@ export function mechControlSystem(dt: number) {
   if (!isImmobilized) {
     // Chassis Turn (A / D)
     const turnSpeed = robotClass.turnSpeed
-    if (inputSystem.isPressed(InputAction.IA_LEFT)) {
+    const leftPressed = inputSystem.isPressed(InputAction.IA_LEFT)
+    const rightPressed = inputSystem.isPressed(InputAction.IA_RIGHT)
+    const keyboardTurn = (leftPressed ? -1 : 0) + (rightPressed ? 1 : 0)
+    const turnAxis = isMobile() ? avatarTurnAxis : keyboardTurn
+    if (turnAxis < 0) {
       pilot.chassisYaw -= turnSpeed * dt
-      networkTurnDir -= 1
     }
-    if (inputSystem.isPressed(InputAction.IA_RIGHT)) {
+    if (turnAxis > 0) {
       pilot.chassisYaw += turnSpeed * dt
-      networkTurnDir += 1
     }
+    networkTurnDir = Math.max(-1, Math.min(1, turnAxis))
 
     // Chassis Forward / Backward (W / S)
     const moveSpeed = robotClass.moveSpeed
     let moveDelta = 0
-    if (inputSystem.isPressed(InputAction.IA_FORWARD)) {
-      moveDelta += moveSpeed * dt
-      networkMoveDir += 1
+    const forwardPressed = inputSystem.isPressed(InputAction.IA_FORWARD)
+    const backwardPressed = inputSystem.isPressed(InputAction.IA_BACKWARD)
+    const keyboardMove = (forwardPressed ? 1 : 0) + (backwardPressed ? -1 : 0)
+    const moveAxis = isMobile() ? avatarMoveAxis : keyboardMove
+    if (moveAxis > 0) {
+      moveDelta += moveSpeed * dt * moveAxis
     }
-    if (inputSystem.isPressed(InputAction.IA_BACKWARD)) {
-      moveDelta -= moveSpeed * 0.6 * dt // Reversing is 60% speed
-      networkMoveDir -= 1
+    if (moveAxis < 0) {
+      moveDelta += moveSpeed * 0.6 * dt * moveAxis // Reverse is 60% speed
     }
+    networkMoveDir = Math.max(-1, Math.min(1, moveAxis))
 
     // Spacebar Thruster Dash
     if (inputSystem.isPressed(InputAction.IA_JUMP) && pilot.dashCooldown <= 0) {
@@ -278,13 +381,16 @@ export function mechControlSystem(dt: number) {
       }
     }
 
-    if (!obstructed && !serverAuthoritative) {
+    // Predict local movement immediately in multiplayer too. Server snapshots
+    // reconcile this position in networkClient instead of moving the camera in
+    // discrete 20 Hz steps.
+    if (!obstructed) {
       transform.position.x = clampedX
       transform.position.z = clampedZ
     }
 
     // Apply rotation
-    if (!serverAuthoritative) transform.rotation = Quaternion.fromEulerDegrees(0, pilot.chassisYaw, 0)
+    transform.rotation = Quaternion.fromEulerDegrees(0, pilot.chassisYaw + 180, 0)
 
     // Check Bottomless Pits
     for (const [_, pit] of serverAuthoritative ? [] : engine.getEntitiesWith(PitHazard)) {
@@ -298,41 +404,32 @@ export function mechControlSystem(dt: number) {
     }
   }
 
-  if (!serverAuthoritative) {
-    // Solo practice keeps the weapon aligned with the chassis. Multiplayer aim is
-    // controlled with the mouse on desktop and right-side touch movement on mobile.
-    pilot.turretYaw = pilot.chassisYaw
-  } else if (isMobile()) {
-    updateMobileAim(pilot)
-  } else {
-    const ray = PrimaryPointerInfo.getOrNull(engine.RootEntity)?.worldRayDirection
-    if (ray && Math.hypot(ray.x, ray.z) > 0.001) {
-      pilot.turretYaw = normalizeYaw((Math.atan2(ray.x, ray.z) * 180) / Math.PI)
-    }
-  }
+  updateAimAndBarrel(pilot, transform.position)
 
-  netSendInput(networkMoveDir, networkTurnDir, pilot.turretYaw)
+  updateTurretVisual(pilot.turretYaw, pilot.chassisYaw, pilot.turretPitch)
+
+  netSendInput(networkMoveDir, networkTurnDir, pilot.turretYaw, pilot.turretPitch)
 
   // 3. Combat Action Inputs
-  // Reload [E]
-  if (inputSystem.isPressed(InputAction.IA_PRIMARY) && pilot.state === MechStateEnum.NORMAL && pilot.ammo < pilot.maxAmmo) {
+  // Decentraland's fixed keyboard actions map E to IA_PRIMARY and F to IA_SECONDARY.
+  if (inputSystem.isTriggered(InputAction.IA_PRIMARY, PointerEventType.PET_DOWN)) repairRequested = true
+  if (inputSystem.isTriggered(InputAction.IA_SECONDARY, PointerEventType.PET_DOWN)) reloadRequested = true
+  if (reloadRequested && pilot.state === MechStateEnum.NORMAL && pilot.ammo < pilot.maxAmmo) {
     netSendAction('reload')
     if (!serverAuthoritative) {
       pilot.state = MechStateEnum.RELOADING
       pilot.stateTimer = robotClass.reloadTime
-      console.log(`Reloading ammo (${robotClass.reloadTime}s)...`)
     }
   }
-
-  // Repair [F]
-  if (inputSystem.isPressed(InputAction.IA_SECONDARY) && pilot.state === MechStateEnum.NORMAL && pilot.shields < pilot.maxShields) {
+  if (repairRequested && pilot.state === MechStateEnum.NORMAL && pilot.shields < pilot.maxShields) {
     netSendAction('repair')
     if (!serverAuthoritative) {
       pilot.state = MechStateEnum.REPAIRING
       pilot.stateTimer = robotClass.repairTime
-      console.log(`Repairing shields (${robotClass.repairTime}s immobilized)...`)
     }
   }
+  reloadRequested = false
+  repairRequested = false
 
   // Exit Mech [1]
   if (inputSystem.isPressed(InputAction.IA_ACTION_3)) {
@@ -343,7 +440,8 @@ export function mechControlSystem(dt: number) {
   // Fire Lasers [LMB / Pointer]
   lastShotTime += dt
   if (inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
-    fireRequested = true
+    // Mobile firing is controlled by the HUD button; desktop uses pointer fire.
+    if (!isMobile()) fireRequested = true
   }
   if (pilot.state !== MechStateEnum.NORMAL) fireRequested = false
   const fireInput = fireRequested
@@ -351,7 +449,7 @@ export function mechControlSystem(dt: number) {
     if (serverAuthoritative) {
       netSendAction('fire')
       lastShotTime = 0
-      fireRequested = false
+      if (!isMobile()) fireRequested = false
     } else if (pilot.ammo > 0) {
       const shotCost = robotClass.shotStyle === 'burst' ? 3 : 1
       if (pilot.ammo < shotCost) {
@@ -361,7 +459,7 @@ export function mechControlSystem(dt: number) {
       }
       pilot.ammo -= shotCost
       lastShotTime = 0
-      fireRequested = false
+      if (!isMobile()) fireRequested = false
       netSendAction('fire')
       firePlayerLasers(transform.position, pilot.turretYaw, robotClass.shotStyle, robotClass.damage)
 
@@ -384,52 +482,123 @@ function normalizeYaw(yaw: number): number {
   return ((yaw % 360) + 540) % 360 - 180
 }
 
-function updateMobileAim(pilot: { turretYaw: number; chassisYaw: number }): void {
-  const pointerX = PrimaryPointerInfo.getOrNull(engine.RootEntity)?.screenCoordinates?.x
-  const canvasWidth = UiCanvasInformation.getOrNull(engine.RootEntity)?.width ?? 1920
-  const rightSideStart = canvasWidth * 0.45
+function updateTurretVisual(turretYaw: number, chassisYaw: number, turretPitch: number): void {
+  if (!playerTurretEntity || !Transform.has(playerTurretEntity)) return
+  Transform.getMutable(playerTurretEntity).rotation = Quaternion.fromEulerDegrees(
+    turretPitch,
+    normalizeYaw(turretYaw - chassisYaw),
+    0
+  )
+}
 
-  if (pointerX !== undefined) {
-    if (lastMobileAimX !== undefined && pointerX >= rightSideStart && lastMobileAimX >= rightSideStart) {
-      const dragDelta = pointerX - lastMobileAimX
-      // Ignore large coordinate jumps when a new touch begins on the right side.
-      if (Math.abs(dragDelta) <= 120) {
-        pilot.turretYaw = normalizeYaw(pilot.turretYaw + dragDelta * MOBILE_AIM_SENSITIVITY)
+function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; chassisYaw: number; classId: string }, mechPosition: Vector3): void {
+  const pointer = PrimaryPointerInfo.getOrNull(engine.RootEntity)
+  let deltaX = 0
+  let deltaY = 0
+
+  if (isMobile()) {
+    // Derive touch drag from position samples. Only the right half is an aim
+    // zone, leaving the left side for movement controls and avoiding HUD taps.
+    const position = pointer?.screenCoordinates
+    const canvasWidth = UiCanvasInformation.getOrNull(engine.RootEntity)?.width ?? 1920
+    if (position && position.x >= canvasWidth * 0.5) {
+      if (lastAimPointer) {
+        deltaX = position.x - lastAimPointer.x
+        deltaY = position.y - lastAimPointer.y
       }
+      lastAimPointer = { x: position.x, y: position.y }
+      smoothedMobileAimX += (deltaX - smoothedMobileAimX) * MOBILE_AIM_SMOOTHING
+      smoothedMobileAimY += (deltaY - smoothedMobileAimY) * MOBILE_AIM_SMOOTHING
+      deltaX = smoothedMobileAimX
+      deltaY = smoothedMobileAimY
+    } else {
+      lastAimPointer = undefined
+      smoothedMobileAimX = 0
+      smoothedMobileAimY = 0
     }
-    lastMobileAimX = pointerX
+  } else {
+    // The desktop cursor is locked while piloting, so screenDelta gives smooth
+    // mouse-look without moving the centered reticle toward a screen edge.
+    const movement = pointer?.screenDelta
+    if (movement) {
+      deltaX = movement.x
+      deltaY = movement.y
+    }
   }
+
+  // Bound a single-frame spike while preserving quick swipes.
+  deltaX = Math.max(-120, Math.min(120, deltaX))
+  deltaY = Math.max(-120, Math.min(120, deltaY))
+  // SDK touch coordinates run opposite the intended camera yaw on mobile.
+  // Keep desktop mouse-look behavior unchanged.
+  const aimDirection = isMobile() ? -1 : 1
+  const sensitivity = isMobile() ? MOBILE_AIM_SENSITIVITY * mobileAimSensitivity : AIM_SENSITIVITY
+  cameraAimYaw = normalizeYaw(cameraAimYaw + deltaX * sensitivity * aimDirection)
+  aimPitch = Math.max(MIN_AIM_PITCH, Math.min(MAX_AIM_PITCH, aimPitch + deltaY * sensitivity))
+
+  // Aim the camera ray at a distant point, then converge the gun from its muzzle
+  // toward that point. This compensates for the third-person camera sitting behind
+  // and above the robot, so the centered reticle and barrel agree.
+  const cameraYawRad = (cameraAimYaw * Math.PI) / 180
+  const cameraPitchRad = (aimPitch * Math.PI) / 180
+  const chassisRad = (pilot.chassisYaw * Math.PI) / 180
+  const cameraX = mechPosition.x - Math.sin(chassisRad) * 6.5
+  const cameraY = mechPosition.y + 3.2
+  const cameraZ = mechPosition.z - Math.cos(chassisRad) * 6.5
+  const rayX = Math.sin(cameraYawRad) * Math.cos(cameraPitchRad)
+  const rayY = -Math.sin(cameraPitchRad)
+  const rayZ = Math.cos(cameraYawRad) * Math.cos(cameraPitchRad)
+  const weaponRange = ROBOT_CLASSES[pilot.classId as RobotClassId]?.range ?? ROBOT_CLASSES.bastion.range
+  const aimDistance = weaponRange + 6.5
+  const targetX = cameraX + rayX * aimDistance
+  const targetY = cameraY + rayY * aimDistance
+  const targetZ = cameraZ + rayZ * aimDistance
+  const barrelX = targetX - mechPosition.x
+  const barrelY = targetY - (mechPosition.y + MUZZLE_HEIGHT)
+  const barrelZ = targetZ - mechPosition.z
+  pilot.turretYaw = normalizeYaw((Math.atan2(barrelX, barrelZ) * 180) / Math.PI)
+  pilot.turretPitch = Math.max(MIN_AIM_PITCH, Math.min(MAX_AIM_PITCH,
+    (Math.atan2(-barrelY, Math.hypot(barrelX, barrelZ)) * 180) / Math.PI))
 
   if (mechCameraEntity && Transform.has(mechCameraEntity)) {
     const camera = Transform.getMutable(mechCameraEntity)
-    camera.rotation = Quaternion.fromEulerDegrees(14, normalizeYaw(pilot.turretYaw - pilot.chassisYaw), 0)
+    camera.rotation = Quaternion.fromEulerDegrees(aimPitch, normalizeYaw(cameraAimYaw - pilot.chassisYaw + 180), 0)
   }
 }
 
 function firePlayerLasers(origin: Vector3, yawDeg: number, style: string, damage: number) {
   const rad = (yawDeg * Math.PI) / 180
-  const dirX = Math.sin(rad)
-  const dirZ = Math.cos(rad)
+  const pitchRad = (playerMechEntity ? MechPilot.getOrNull(playerMechEntity)?.turretPitch ?? 0 : 0) * Math.PI / 180
+  const horizontalScale = Math.cos(pitchRad)
+  const dirX = Math.sin(rad) * horizontalScale
+  const dirY = -Math.sin(pitchRad)
+  const dirZ = Math.cos(rad) * horizontalScale
+  const muzzleX = origin.x + dirX * MUZZLE_FORWARD_DISTANCE
+  const muzzleZ = origin.z + dirZ * MUZZLE_FORWARD_DISTANCE
+  const muzzleY = origin.y + MUZZLE_HEIGHT + dirY * MUZZLE_FORWARD_DISTANCE
 
   if (style === 'burst' || style === 'scatter') {
     for (let i = -1; i <= 1; i++) {
       const yawOffset = i * (style === 'scatter' ? 8 : 2)
       const shotRad = ((yawDeg + yawOffset) * Math.PI) / 180
       const pelletDamage = style === 'scatter' ? damage / 3 : damage
-      spawnLaserBeam(origin.x, origin.y + 1.25, origin.z, Math.sin(shotRad), Math.cos(shotRad), true, pelletDamage)
+      spawnLaserBeam(muzzleX, muzzleY, muzzleZ, Math.sin(shotRad) * horizontalScale, dirY, Math.cos(shotRad) * horizontalScale, true, pelletDamage)
     }
   } else {
-    const width = style === 'charged' ? 0.08 : 0.6
-    spawnLaserBeam(origin.x, origin.y + 1.25, origin.z, dirX, dirZ, true, damage)
+    spawnLaserBeam(muzzleX, muzzleY, muzzleZ, dirX, dirY, dirZ, true, damage)
   }
 }
 
-export function spawnLaserBeam(x: number, y: number, z: number, dirX: number, dirZ: number, isPlayer: boolean, damage = 1) {
+export function spawnLaserBeam(x: number, y: number, z: number, dirX: number, dirY: number, dirZ: number, isPlayer: boolean, damage = 1) {
   const beam = engine.addEntity()
   Transform.create(beam, {
     position: Vector3.create(x, y, z),
     scale: Vector3.create(0.12, 0.12, 1.8),
-    rotation: Quaternion.fromEulerDegrees(0, (Math.atan2(dirX, dirZ) * 180) / Math.PI, 0)
+    rotation: Quaternion.fromEulerDegrees(
+      (Math.atan2(-dirY, Math.hypot(dirX, dirZ)) * 180) / Math.PI,
+      (Math.atan2(dirX, dirZ) * 180) / Math.PI,
+      0
+    )
   })
   MeshRenderer.setCylinder(beam)
   Material.setPbrMaterial(beam, {
@@ -442,6 +611,7 @@ export function spawnLaserBeam(x: number, y: number, z: number, dirX: number, di
     damage,
     shooterIsPlayer: isPlayer,
     dirX: dirX,
+    dirY: dirY,
     dirZ: dirZ,
     speed: 46.0
   })

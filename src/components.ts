@@ -14,6 +14,7 @@ export const MechPilot = engine.defineComponent('mech-pilot', {
   classId: Schemas.String,
   chassisYaw: Schemas.Number,
   turretYaw: Schemas.Number,
+  turretPitch: Schemas.Number,
   shields: Schemas.Number,
   maxShields: Schemas.Number,
   ammo: Schemas.Number,
@@ -40,6 +41,7 @@ export const LaserProjectile = engine.defineComponent('laser-projectile', {
   damage: Schemas.Number,
   shooterIsPlayer: Schemas.Boolean,
   dirX: Schemas.Number,
+  dirY: Schemas.Number,
   dirZ: Schemas.Number,
   speed: Schemas.Number
 })
