@@ -90,7 +90,7 @@ export function isMobileAimInverted(): boolean {
   return invertMobileAimY
 }
 
-function updateNativeJoystickFromAvatar(): void {
+function updateNativeJoystickFromAvatar(dt: number): void {
   avatarMoveAxis = 0
   avatarTurnAxis = 0
   if (!isMobile() || !avatarControlAnchor || !playerMechEntity) return
@@ -103,13 +103,24 @@ function updateNativeJoystickFromAvatar(): void {
   const forwardZ = Math.cos(yaw)
   const forward = dx * forwardX + dz * forwardZ
   const lateral = dx * forwardZ - dz * forwardX
-  const deadZone = 0.0005
+  // The Explorer's native joystick moves the avatar transform. Ignore tiny
+  // locomotion/camera noise before turning that displacement into mech input.
+  const deadZone = 0.02
   if (Math.abs(forward) > deadZone) avatarMoveAxis = Math.sign(forward)
   if (Math.abs(lateral) > deadZone) avatarTurnAxis = Math.sign(lateral)
-  smoothedAvatarMoveAxis += (avatarMoveAxis - smoothedAvatarMoveAxis) * 0.55
-  smoothedAvatarTurnAxis += (avatarTurnAxis - smoothedAvatarTurnAxis) * 0.55
-  // Keep avatar locomotion from carrying the player away from the mech camera.
-  avatar.position = Vector3.clone(avatarControlAnchor)
+  // Use time-based smoothing so phone frame rate changes don't change the
+  // joystick response. Snap near-zero residuals fully off to prevent creep.
+  const smoothing = 1 - Math.exp(-Math.max(0, dt) / 0.07)
+  smoothedAvatarMoveAxis += (avatarMoveAxis - smoothedAvatarMoveAxis) * smoothing
+  smoothedAvatarTurnAxis += (avatarTurnAxis - smoothedAvatarTurnAxis) * smoothing
+  if (Math.abs(smoothedAvatarMoveAxis) < 0.035) smoothedAvatarMoveAxis = 0
+  if (Math.abs(smoothedAvatarTurnAxis) < 0.035) smoothedAvatarTurnAxis = 0
+  // Only correct the avatar transform when the native joystick actually
+  // displaced it. Rewriting its transform every phone frame makes the
+  // Explorer locomotion controller and scene fight over the same position.
+  if (dx * dx + dz * dz > deadZone * deadZone) {
+    avatar.position = Vector3.clone(avatarControlAnchor)
+  }
 }
 
 export function requestReload(): void {
@@ -327,7 +338,7 @@ export function mechControlSystem(dt: number) {
   syncShieldVisual(playerMechEntity, pilot.shields, pilot.maxShields)
 
   const transform = Transform.getMutable(playerMechEntity)
-  updateNativeJoystickFromAvatar()
+  updateNativeJoystickFromAvatar(dt)
   const robotClass = ROBOT_CLASSES[pilot.classId as RobotClassId] ?? ROBOT_CLASSES.bastion
   const serverAuthoritative = getGameMode() === 'multiplayer' && isMultiplayerConnected()
 
