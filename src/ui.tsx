@@ -90,7 +90,7 @@ const uiComponent = () => {
         <UiEntity
           uiTransform={{
             width: isMobile() ? 230 : 300,
-            height: isMobile() ? 118 : 140,
+            height: isMobile() ? 140 : 160,
             positionType: 'absolute',
             position: isMobile() ? { top: 74, left: 12 } : { bottom: 20, left: 20 },
             flexDirection: 'column',
@@ -115,6 +115,13 @@ const uiComponent = () => {
                 ? Color4.create(1.0, 0.2, 0.2, 1)
                 : Color4.create(0.0, 0.85, 1.0, 1)
             }
+            uiTransform={{ height: 22 }}
+          />
+
+          <Label
+            value={`HULL: ${renderHullBar(pilot?.hp ?? 100, pilot?.maxHp ?? 100)} (${pilot?.hp ?? 100}/${pilot?.maxHp ?? 100})`}
+            fontSize={14}
+            color={(pilot?.hp ?? 100) <= 30 ? Color4.create(1, 0.18, 0.12, 1) : Color4.create(0.82, 0.2, 0.18, 1)}
             uiTransform={{ height: 22 }}
           />
 
@@ -168,13 +175,13 @@ const uiComponent = () => {
             uiTransform={{ height: 16 }}
           />
           <Label
-            value={`[F] Reload Ammo (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].reloadTime.toFixed(1)}s)`}
+            value={`[E] Reload Ammo (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].reloadTime.toFixed(1)}s)`}
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
           />
           <Label
-            value="[E] Repair Shields (immobilized while repairing)"
+            value="[F] Repair Shields (immobilized while repairing)"
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
@@ -184,7 +191,7 @@ const uiComponent = () => {
               ? '[W/S] Drive | [A/D] Turn | [1] Exit Mech'
               : isMobile()
               ? 'DCL joystick: drive/steer | drag upper-right: aim'
-              : 'Mouse look: aim | W/S drive | A/D turn | LMB fire | F reload | E repair'}
+              : 'Mouse look: aim | W/S drive | A/D turn | LMB fire | E reload | F repair'}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
             uiTransform={{ height: 16 }}
@@ -344,6 +351,11 @@ function renderAmmoPips(current: number, max: number): string {
     str += i < current ? '|' : '.'
   }
   return str
+}
+
+function renderHullBar(current: number, max: number): string {
+  const filled = Math.max(0, Math.min(10, Math.ceil((current / Math.max(1, max)) * 10)))
+  return '█'.repeat(filled) + '░'.repeat(10 - filled)
 }
 
 function renderStatusText(state: number, timer: number): string {

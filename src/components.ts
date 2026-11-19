@@ -17,6 +17,8 @@ export const MechPilot = engine.defineComponent('mech-pilot', {
   turretPitch: Schemas.Number,
   shields: Schemas.Number,
   maxShields: Schemas.Number,
+  hp: Schemas.Number,
+  maxHp: Schemas.Number,
   ammo: Schemas.Number,
   maxAmmo: Schemas.Number,
   state: Schemas.Number,
@@ -31,6 +33,8 @@ export const SentinelBot = engine.defineComponent('sentinel-bot', {
   patrolIndex: Schemas.Number,
   shields: Schemas.Number,
   maxShields: Schemas.Number,
+  hp: Schemas.Number,
+  maxHp: Schemas.Number,
   shootCooldown: Schemas.Number,
   isAlive: Schemas.Boolean,
   respawnTimer: Schemas.Number

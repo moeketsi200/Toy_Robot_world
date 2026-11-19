@@ -2,12 +2,15 @@ import {
   engine,
   Transform
 } from '@dcl/sdk/ecs'
+import { Vector3 } from '@dcl/sdk/math'
 import { LaserProjectile, Obstacle, SentinelBot, MechPilot, MechStateEnum } from './components'
 import { damageBot } from './aiBot'
 import { playerMechEntity, exitMech } from './mechController'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
+import { damageEffectsSystem, spawnHullHit, syncShieldVisual } from './damageEffects'
 
 export function combatSystem(dt: number) {
+  damageEffectsSystem(dt)
   for (const [entity, laser] of engine.getEntitiesWith(LaserProjectile)) {
     const transform = Transform.getMutable(entity)
 
@@ -40,7 +43,7 @@ export function combatSystem(dt: number) {
             removeLaser = true
             const pilot = playerMechEntity ? MechPilot.getOrNull(playerMechEntity) : null
             const robotClass = ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion']
-            damageBot(botEnt, laser.damage)
+            damageBot(botEnt, laser.damage, Vector3.clone(transform.position))
             break
           }
         }
@@ -55,10 +58,15 @@ export function combatSystem(dt: number) {
         const dist = Math.hypot(transform.position.x - playerPos.x, transform.position.y - (playerPos.y + 2.7), transform.position.z - playerPos.z)
         if (dist < 1.8) {
           removeLaser = true
-          pilot.shields = Math.max(0, pilot.shields - laser.damage)
-          console.log(`Player mech hit! Shields remaining: ${pilot.shields}/${pilot.maxShields}`)
+          const shieldDamage = Math.min(pilot.shields, laser.damage)
+          pilot.shields = Math.max(0, pilot.shields - shieldDamage)
+          const hullDamage = Math.min(pilot.hp, laser.damage - shieldDamage)
+          pilot.hp = Math.max(0, pilot.hp - hullDamage)
+          syncShieldVisual(playerMechEntity, pilot.shields, pilot.maxShields)
+          if (hullDamage > 0) spawnHullHit(Vector3.clone(transform.position))
+          console.log(`Player mech hit! Shields ${pilot.shields}/${pilot.maxShields}, hull ${pilot.hp}/${pilot.maxHp}`)
 
-          if (pilot.shields <= 0) {
+          if (pilot.hp <= 0) {
             pilot.deaths++
             console.log('Player Mech DESTROYED! Returning to Hangar.')
             exitMech()

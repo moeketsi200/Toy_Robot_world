@@ -9,13 +9,14 @@
 
 import { engine, Transform, GltfContainer, MeshRenderer, Material, Entity, executeTask, TextShape, Billboard } from '@dcl/sdk/ecs'
 import { Vector3, Quaternion, Color4 } from '@dcl/sdk/math'
-import { GameEvent, RobotState, WelcomePacket, WorldTickPacket, RobotClassId } from '../server/src/types'
+import { GameEvent, RobotState, WelcomePacket, WorldTickPacket, RobotClassId, MAX_ROBOT_HP } from '../server/src/types'
 import { getSelectedClassId, playerMechEntity } from './mechController'
 import { MechPilot, MechStateEnum } from './components'
 import { getGameMode, setUnlockedRobots } from './gameMode'
 import { signedFetch } from '~system/SignedFetch'
 import { SERVER_HTTP_URL, SERVER_WS_URL } from './serverConfig'
 import { hasSeparateTurret, robotModelPath } from './robotModels'
+import { createShieldVisual, removeShieldVisual, spawnHullHit, syncShieldVisual } from './damageEffects'
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ const remoteRobotEntities = new Map<string, Entity>()
 const remoteTurretEntities = new Map<string, Entity>()
 const remoteRobotLabels = new Map<string, Entity>()
 const remoteRobotClasses = new Map<string, RobotClassId>()
+const remoteYaw = new Map<string, number>()
 const shotEffects: Array<{ entity: Entity; remaining: number }> = []
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -276,8 +278,10 @@ function reconcileWorld(robots: RobotState[]): void {
   for (const [id, ent] of remoteRobotEntities) {
     if (!seenIds.has(id)) {
       engine.removeEntity(ent)
+      removeShieldVisual(ent)
       remoteRobotEntities.delete(id)
       remoteRobotClasses.delete(id)
+      remoteYaw.delete(id)
       const label = remoteRobotLabels.get(id)
       if (label !== undefined) engine.removeEntity(label)
       remoteRobotLabels.delete(id)
@@ -290,12 +294,16 @@ function reconcileWorld(robots: RobotState[]): void {
 }
 
 function clearRemoteRobots(): void {
-  for (const entity of remoteRobotEntities.values()) engine.removeEntity(entity)
+  for (const entity of remoteRobotEntities.values()) {
+    engine.removeEntity(entity)
+    removeShieldVisual(entity)
+  }
   for (const entity of remoteTurretEntities.values()) engine.removeEntity(entity)
   for (const entity of remoteRobotLabels.values()) engine.removeEntity(entity)
   remoteRobotEntities.clear()
   remoteTurretEntities.clear()
   remoteRobotClasses.clear()
+  remoteYaw.clear()
   remoteRobotLabels.clear()
 }
 
@@ -310,17 +318,25 @@ function reconcileLocalRobot(robot: RobotState): void {
   const dx = robot.x - transform.position.x
   const dz = robot.z - transform.position.z
   const error = Math.hypot(dx, dz)
-  const smoothing = error > 1.5 ? 1 : 0.12
+  // The local mech already predicts input every rendered frame. Server
+  // snapshots arrive at 20 Hz, so easing each snapshot back toward its older
+  // position creates a visible tug-of-war (camera shake). Ignore tiny drift
+  // and only snap when a real correction is needed, such as a respawn.
+  const correctionThreshold = 0.75
+  const smoothing = error > 4 ? 1 : error > correctionThreshold ? 0.08 : 0
   transform.position.x += dx * smoothing
   transform.position.z += dz * smoothing
-  transform.position.y = robot.state === 'DESTROYED' ? -100 : 0.1
-  transform.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw + 180, 0)
+  transform.position.y = robot.state === 'DESTROYED' ? -100 : robot.state === 'FALLING' ? transform.position.y : 0.1
+  // Keep locally predicted yaw while turning; resetting it to a delayed
+  // snapshot causes the other half of the same tug-of-war.
   pilot.classId = robot.classId
-  pilot.chassisYaw = robot.chassisYaw
-  pilot.turretYaw = robot.turretYaw
-  pilot.turretPitch = robot.turretPitch ?? 0
+  // The locally calculated chassis/turret angles are already ahead of these
+  // snapshots; preserve them and use server yaw only for remote entities.
   pilot.shields = robot.shields
   pilot.maxShields = robot.maxShields
+  pilot.hp = robot.hp ?? MAX_ROBOT_HP
+  pilot.maxHp = robot.maxHp ?? MAX_ROBOT_HP
+  syncShieldVisual(playerMechEntity, robot.shields, robot.maxShields)
   pilot.ammo = robot.ammo
   pilot.maxAmmo = robot.maxAmmo
   pilot.stateTimer = robot.stateTimer
@@ -343,6 +359,7 @@ function spawnRemoteRobot(robot: RobotState): void {
   })
 
   GltfContainer.create(ent, { src: robotModelPath(robot.classId) })
+  createShieldVisual(ent, robot.shields, robot.maxShields)
 
   const turret = engine.addEntity()
   Transform.create(turret, {
@@ -369,6 +386,7 @@ function spawnRemoteRobot(robot: RobotState): void {
   remoteRobotEntities.set(robot.id, ent)
   remoteTurretEntities.set(robot.id, turret)
   remoteRobotClasses.set(robot.id, robot.classId)
+  remoteYaw.set(robot.id, robot.chassisYaw)
   remoteRobotLabels.set(robot.id, label)
   console.log('[Net] Robot joined:', robot.id, robot.isBot ? '(bot)' : '(player)')
 }
@@ -402,7 +420,14 @@ function updateRemoteRobot(robot: RobotState): void {
     t.position.y = 0.2
   }
 
-  t.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw, 0)
+  // Snapshot yaw is unwrapped on the server (it can cross 360°), so use the
+  // shortest angular path to avoid a full spin at the wrap boundary.
+  const currentYaw = remoteYaw.get(robot.id) ?? robot.chassisYaw
+  const yawDelta = ((robot.chassisYaw - currentYaw) % 360 + 540) % 360 - 180
+  const nextYaw = (currentYaw + yawDelta * 0.25 + 360) % 360
+  remoteYaw.set(robot.id, nextYaw)
+  t.rotation = Quaternion.fromEulerDegrees(0, nextYaw, 0)
+  syncShieldVisual(ent, robot.shields, robot.maxShields)
 
   const turret = remoteTurretEntities.get(robot.id)
   if (turret !== undefined) {
@@ -430,6 +455,9 @@ function processEvents(events: GameEvent[]): void {
       console.log('[Net] We took', ev.damage, 'damage from', ev.shooterId)
       // HUD damage flash is handled by ui.tsx reading MechPilot component
     }
+    if (ev.type === 'DAMAGE_TAKEN' && ev.hullDamage && ev.hullDamage > 0 && ev.at) {
+      spawnHullHit(Vector3.create(ev.at[0], ev.at[1], ev.at[2]))
+    }
     if (ev.type === 'ROBOT_DESTROYED') {
       console.log('[Net] Robot destroyed:', ev.targetId, 'by', ev.shooterId)
     }
@@ -438,7 +466,7 @@ function processEvents(events: GameEvent[]): void {
 
 function remoteShieldText(robot: RobotState): string {
   const pips = Array.from({ length: robot.maxShields }, (_, index) => index < robot.shields ? '■' : '□').join('')
-  return `${robot.name}\nSHIELDS ${pips}`
+  return `${robot.name}\nSHIELDS ${pips}\nHULL ${robot.hp ?? MAX_ROBOT_HP}/${robot.maxHp ?? MAX_ROBOT_HP}`
 }
 
 function spawnNetworkShot(from: [number, number, number], to: [number, number, number], isPlayerShot: boolean): void {

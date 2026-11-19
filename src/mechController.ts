@@ -20,9 +20,10 @@ import { Color4, Vector3, Quaternion } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
 import { MechPilot, MechStateEnum, Obstacle, PitHazard, LaserProjectile } from './components'
 import { initNetworkClient, netSendInput, netSendAction, netSelectRobot, netJoinWar, netLeaveWar, disconnectNetworkClient, isMultiplayerConnected } from './networkClient'
-import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
+import { MAX_ROBOT_HP, ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { canUseRobotInMode, getGameMode, GameMode, setGameMode } from './gameMode'
 import { hasSeparateTurret, robotModelPath, SELECTABLE_ROBOT_CLASSES } from './robotModels'
+import { createShieldVisual, syncShieldVisual } from './damageEffects'
 
 export let playerMechEntity: Entity | null = null
 export let mechCameraEntity: Entity | null = null
@@ -177,6 +178,8 @@ export function initMech() {
     turretPitch: 4.5,
     shields: 6,
     maxShields: 6,
+    hp: MAX_ROBOT_HP,
+    maxHp: MAX_ROBOT_HP,
     ammo: 8,
     maxAmmo: 8,
     state: MechStateEnum.NORMAL,
@@ -185,6 +188,8 @@ export function initMech() {
     kills: 0,
     deaths: 0
   })
+  const initialPilot = MechPilot.get(playerMechEntity)
+  createShieldVisual(playerMechEntity, initialPilot.shields, initialPilot.maxShields)
 
   // The GLB faces local -Z while gameplay forward is +Z. Parent rotation below
   // turns the model to face gameplay-forward, so +Z here is behind the robot.
@@ -223,8 +228,12 @@ export function enterMech() {
   const robotClass = ROBOT_CLASSES[selectedClassId]
   pilot.isPiloting = true
   pilot.classId = selectedClassId
-  pilot.shields = robotClass.maxShields
+  if (pilot.hp <= 0) {
+    pilot.hp = pilot.maxHp
+    pilot.shields = robotClass.maxShields
+  }
   pilot.maxShields = robotClass.maxShields
+  pilot.shields = Math.min(pilot.shields, pilot.maxShields)
   pilot.ammo = robotClass.maxAmmo
   pilot.maxAmmo = robotClass.maxAmmo
   pilot.state = MechStateEnum.NORMAL
@@ -315,6 +324,7 @@ export function mechControlSystem(dt: number) {
   if (!playerMechEntity) return
   const pilot = MechPilot.getMutableOrNull(playerMechEntity)
   if (!pilot || !pilot.isPiloting) return
+  syncShieldVisual(playerMechEntity, pilot.shields, pilot.maxShields)
 
   const transform = Transform.getMutable(playerMechEntity)
   updateNativeJoystickFromAvatar()
@@ -448,9 +458,9 @@ export function mechControlSystem(dt: number) {
   netSendInput(networkMoveDir, networkTurnDir, pilot.turretYaw, pilot.turretPitch)
 
   // 3. Combat Action Inputs
-  // Decentraland's fixed keyboard actions map E to IA_PRIMARY and F to IA_SECONDARY.
-  if (inputSystem.isTriggered(InputAction.IA_PRIMARY, PointerEventType.PET_DOWN)) repairRequested = true
-  if (inputSystem.isTriggered(InputAction.IA_SECONDARY, PointerEventType.PET_DOWN)) reloadRequested = true
+  // E / IA_PRIMARY reloads; F / IA_SECONDARY repairs the energy shield.
+  if (inputSystem.isTriggered(InputAction.IA_PRIMARY, PointerEventType.PET_DOWN)) reloadRequested = true
+  if (inputSystem.isTriggered(InputAction.IA_SECONDARY, PointerEventType.PET_DOWN)) repairRequested = true
   if (reloadRequested && pilot.state === MechStateEnum.NORMAL && pilot.ammo < pilot.maxAmmo) {
     netSendAction('reload')
     if (!serverAuthoritative) {

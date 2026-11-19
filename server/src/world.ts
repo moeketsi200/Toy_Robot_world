@@ -1,4 +1,4 @@
-import { RobotState, ClientCommand, GameEvent, WorldTickPacket, RobotClassId, ROBOT_CLASSES } from './types'
+import { RobotState, ClientCommand, GameEvent, WorldTickPacket, RobotClassId, ROBOT_CLASSES, MAX_ROBOT_HP } from './types'
 
 interface BoxCollider {
   minX: number
@@ -69,6 +69,8 @@ export class GameWorld {
       turretPitch: 4.5,
       shields: robotClass.maxShields,
       maxShields: robotClass.maxShields,
+      hp: MAX_ROBOT_HP,
+      maxHp: MAX_ROBOT_HP,
       ammo: robotClass.maxAmmo,
       maxAmmo: robotClass.maxAmmo,
       state: 'NORMAL',
@@ -122,6 +124,8 @@ export class GameWorld {
     robot.classId = classId
     robot.maxShields = robotClass.maxShields
     robot.shields = robotClass.maxShields
+    robot.maxHp = MAX_ROBOT_HP
+    robot.hp = MAX_ROBOT_HP
     robot.maxAmmo = robotClass.maxAmmo
     robot.ammo = robotClass.maxAmmo
   }
@@ -221,27 +225,11 @@ export class GameWorld {
           impactZ = cz
           hitTarget = target
           const damage = (shooterClass.shotStyle === 'burst' ? 0.5 : shooterClass.shotStyle === 'scatter' ? shooterClass.damage / 3 : shooterClass.damage) * falloff
-          target.shields = Math.max(0, target.shields - damage)
-          this.pendingEvents.push({ type: 'DAMAGE_TAKEN', shooterId: shooter.id, targetId: target.id, damage })
-          if (target.shields === 0) {
-            target.state = 'DESTROYED'
-            target.stateTimer = 5
-            target.deaths++
-            shooter.kills++
-            this.pendingEvents.push({ type: 'ROBOT_DESTROYED', targetId: target.id, shooterId: shooter.id })
-          }
+          this.applyRobotDamage(target, shooter, damage, [cx, cy, cz])
           if (shooterClass.shotStyle === 'chain') {
             for (const [otherId, other] of this.robots) {
               if (otherId !== target.id && otherId !== shooter.id && other.state !== 'DESTROYED' && other.state !== 'FALLING' && Math.hypot(other.x - target.x, other.z - target.z) <= 4) {
-                other.shields = Math.max(0, other.shields - shooterClass.damage * 0.5)
-                this.pendingEvents.push({ type: 'DAMAGE_TAKEN', shooterId: shooter.id, targetId: other.id, damage: shooterClass.damage * 0.5 })
-                if (other.shields === 0) {
-                  other.state = 'DESTROYED'
-                  other.stateTimer = 5
-                  other.deaths++
-                  shooter.kills++
-                  this.pendingEvents.push({ type: 'ROBOT_DESTROYED', targetId: other.id, shooterId: shooter.id })
-                }
+                this.applyRobotDamage(other, shooter, shooterClass.damage * 0.5, [other.x, 2.8, other.z])
                 break
               }
             }
@@ -263,6 +251,29 @@ export class GameWorld {
     this.pendingEvents.push(event)
 
     void hitTarget
+  }
+
+  private applyRobotDamage(target: RobotState, shooter: RobotState, amount: number, at: [number, number, number]): void {
+    const shieldDamage = Math.min(target.shields, amount)
+    target.shields = Math.max(0, target.shields - shieldDamage)
+    const hullDamage = Math.min(target.hp, amount - shieldDamage)
+    target.hp = Math.max(0, target.hp - hullDamage)
+    this.pendingEvents.push({
+      type: 'DAMAGE_TAKEN',
+      shooterId: shooter.id,
+      targetId: target.id,
+      damage: amount,
+      shieldDamage,
+      hullDamage,
+      at
+    })
+    if (target.hp <= 0 && target.state !== 'DESTROYED') {
+      target.state = 'DESTROYED'
+      target.stateTimer = 5
+      target.deaths++
+      shooter.kills++
+      this.pendingEvents.push({ type: 'ROBOT_DESTROYED', targetId: target.id, shooterId: shooter.id })
+    }
   }
 
   // 20Hz Tick Loop
@@ -293,6 +304,7 @@ export class GameWorld {
           robot.deaths++
           robot.state = 'NORMAL'
           robot.shields = robot.maxShields
+          robot.hp = robot.maxHp
           robot.x = 32
           robot.z = 30.12
         }
@@ -302,6 +314,7 @@ export class GameWorld {
         if (robot.stateTimer <= 0) {
           robot.state = 'NORMAL'
           robot.shields = robot.maxShields
+          robot.hp = robot.maxHp
           robot.ammo = robot.maxAmmo
           robot.x = 32
           robot.z = 30.12
@@ -384,6 +397,8 @@ export class GameWorld {
       turretPitch: 0,
       shields: 5,
       maxShields: 5,
+      hp: MAX_ROBOT_HP,
+      maxHp: MAX_ROBOT_HP,
       ammo: 999,
       maxAmmo: 999,
       state: 'NORMAL',

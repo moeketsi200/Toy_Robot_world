@@ -3,6 +3,7 @@ export type RobotStateMode = 'NORMAL' | 'RELOADING' | 'REPAIRING' | 'FALLING' | 
 
 export type RobotAction = 'fire' | 'reload' | 'repair' | 'dash'
 export type RobotClassId = 'bastion' | 'spectre' | 'goliath' | 'viper' | 'bulwark' | 'arc'
+export const MAX_ROBOT_HP = 100
 
 export type TournamentStatus = 'registration' | 'live' | 'completed'
 
@@ -72,6 +73,8 @@ export interface RobotState {
   turretPitch?: number
   shields: number
   maxShields: number
+  hp: number
+  maxHp: number
   ammo: number
   maxAmmo: number
   state: RobotStateMode
@@ -136,6 +139,9 @@ export interface GameEvent {
   from?: [number, number, number]
   to?: [number, number, number]
   damage?: number
+  shieldDamage?: number
+  hullDamage?: number
+  at?: [number, number, number]
 }
 
 export interface WorldTickPacket {

@@ -10,6 +10,8 @@ import { Color4, Vector3, Quaternion } from '@dcl/sdk/math'
 import { SentinelBot, MechPilot, MechStateEnum } from './components'
 import { playerMechEntity, spawnLaserBeam } from './mechController'
 import { getGameMode } from './gameMode'
+import { MAX_ROBOT_HP } from '../server/src/types'
+import { createShieldVisual, removeShieldVisual, spawnHullHit, syncShieldVisual } from './damageEffects'
 
 interface BotConfig {
   id: string
@@ -88,10 +90,13 @@ export function initSentinelBot() {
       patrolIndex: 0,
       shields: 5,
       maxShields: 5,
+      hp: MAX_ROBOT_HP,
+      maxHp: MAX_ROBOT_HP,
       shootCooldown: 2.5 + Math.random() * 1.5,
       isAlive: true,
       respawnTimer: 0
     })
+    createShieldVisual(botEnt, 5, 5)
 
     // Overhead 3D status billboard
     const labelEnt = engine.addEntity()
@@ -101,7 +106,7 @@ export function initSentinelBot() {
     })
     Billboard.create(labelEnt)
     TextShape.create(labelEnt, {
-      text: `${config.id}\n[SHIELDS: ■■■■■]`,
+      text: `${config.id}\n[SHIELDS: ■■■■■]\n[HULL: ${MAX_ROBOT_HP}/${MAX_ROBOT_HP}]`,
       fontSize: 2.8,
       textColor: Color4.create(1.0, 0.25, 0.25, 1)
     })
@@ -144,6 +149,7 @@ export function sentinelAiSystem(dt: number) {
 
     const botTransform = Transform.getMutable(botEnt)
     const mutBot = SentinelBot.getMutable(botEnt)
+    syncShieldVisual(botEnt, mutBot.shields, mutBot.maxShields)
 
     // Respawn logic
     if (!mutBot.isAlive) {
@@ -151,8 +157,10 @@ export function sentinelAiSystem(dt: number) {
       if (mutBot.respawnTimer <= 0) {
         mutBot.isAlive = true
         mutBot.shields = mutBot.maxShields
+        mutBot.hp = mutBot.maxHp
         botTransform.position = Vector3.clone(config.startPos)
-        updateBotLabel(botEnt, mutBot.id, mutBot.shields, mutBot.maxShields)
+        syncShieldVisual(botEnt, mutBot.shields, mutBot.maxShields)
+        updateBotLabel(botEnt, mutBot.id, mutBot.shields, mutBot.maxShields, mutBot.hp, mutBot.maxHp)
         console.log(`${mutBot.id} respawned into the war zone!`)
       }
       continue
@@ -216,6 +224,7 @@ function removeSentinelBots(): void {
     if (labelEnt !== undefined) engine.removeEntity(labelEnt)
     const turretEnt = botTurretMap.get(botEnt)
     if (turretEnt !== undefined) engine.removeEntity(turretEnt)
+    removeShieldVisual(botEnt)
     engine.removeEntity(botEnt)
     botLabelMap.delete(botEnt)
     botTurretMap.delete(botEnt)
@@ -229,14 +238,22 @@ function aimBotTurret(botEnt: Entity): void {
   Transform.getMutable(turret).rotation = Quaternion.fromEulerDegrees(0, 0, 0)
 }
 
-export function damageBot(botEnt: Entity, damage: number) {
+export function damageBot(botEnt: Entity, damage: number, hitPosition?: Vector3) {
   const bot = SentinelBot.getMutableOrNull(botEnt)
   if (!bot || !bot.isAlive) return
 
-  bot.shields = Math.max(0, bot.shields - damage)
-  updateBotLabel(botEnt, bot.id, bot.shields, bot.maxShields)
+  const shieldDamage = Math.min(bot.shields, damage)
+  bot.shields = Math.max(0, bot.shields - shieldDamage)
+  const hullDamage = Math.min(bot.hp, damage - shieldDamage)
+  bot.hp = Math.max(0, bot.hp - hullDamage)
+  syncShieldVisual(botEnt, bot.shields, bot.maxShields)
+  if (hullDamage > 0) {
+    const botPosition = Transform.get(botEnt).position
+    spawnHullHit(hitPosition ?? Vector3.create(botPosition.x, botPosition.y + 2.4, botPosition.z))
+  }
+  updateBotLabel(botEnt, bot.id, bot.shields, bot.maxShields, bot.hp, bot.maxHp)
 
-  if (bot.shields <= 0) {
+  if (bot.hp <= 0) {
     bot.isAlive = false
     bot.respawnTimer = 6.0
     // Move underwater/underground while waiting to respawn
@@ -250,7 +267,7 @@ export function damageBot(botEnt: Entity, damage: number) {
   }
 }
 
-function updateBotLabel(botEnt: Entity, botId: string, current: number, max: number) {
+function updateBotLabel(botEnt: Entity, botId: string, current: number, max: number, hp: number, maxHp: number) {
   const labelEnt = botLabelMap.get(botEnt)
   if (!labelEnt) return
   const label = TextShape.getMutableOrNull(labelEnt)
@@ -260,5 +277,5 @@ function updateBotLabel(botEnt: Entity, botId: string, current: number, max: num
   for (let i = 0; i < max; i++) {
     pips += i < current ? '■' : '□'
   }
-  label.text = `${botId}\n[SHIELDS: ${pips}]`
+  label.text = `${botId}\n[SHIELDS: ${pips}]\n[HULL: ${hp}/${maxHp}]`
 }
