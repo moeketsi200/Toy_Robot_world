@@ -15,6 +15,7 @@ import { MechPilot, MechStateEnum } from './components'
 import { getGameMode, setUnlockedRobots } from './gameMode'
 import { signedFetch } from '~system/SignedFetch'
 import { SERVER_HTTP_URL, SERVER_WS_URL } from './serverConfig'
+import { hasSeparateTurret, robotModelPath } from './robotModels'
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ let inputSendTimer = 0
 const remoteRobotEntities = new Map<string, Entity>()
 const remoteTurretEntities = new Map<string, Entity>()
 const remoteRobotLabels = new Map<string, Entity>()
+const remoteRobotClasses = new Map<string, RobotClassId>()
 const shotEffects: Array<{ entity: Entity; remaining: number }> = []
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -275,6 +277,7 @@ function reconcileWorld(robots: RobotState[]): void {
     if (!seenIds.has(id)) {
       engine.removeEntity(ent)
       remoteRobotEntities.delete(id)
+      remoteRobotClasses.delete(id)
       const label = remoteRobotLabels.get(id)
       if (label !== undefined) engine.removeEntity(label)
       remoteRobotLabels.delete(id)
@@ -292,6 +295,7 @@ function clearRemoteRobots(): void {
   for (const entity of remoteRobotLabels.values()) engine.removeEntity(entity)
   remoteRobotEntities.clear()
   remoteTurretEntities.clear()
+  remoteRobotClasses.clear()
   remoteRobotLabels.clear()
 }
 
@@ -333,26 +337,22 @@ function reconcileLocalRobot(robot: RobotState): void {
 function spawnRemoteRobot(robot: RobotState): void {
   const ent = engine.addEntity()
   Transform.create(ent, {
-    position: Vector3.create(robot.x, 0.1, robot.z),
+    position: Vector3.create(robot.x, 0.2, robot.z),
     rotation: Quaternion.fromEulerDegrees(0, robot.chassisYaw + 180, 0),
     scale: Vector3.create(1, 1, 1)
   })
 
-  if (robot.isBot) {
-    // AI bot — use a red tinted placeholder mesh until we have a second GLB
-    GltfContainer.create(ent, { src: 'assets/models/mech_bastion_chassis.glb' })
-  } else {
-    // Human player — use the same mech but we could tint it differently
-    GltfContainer.create(ent, { src: 'assets/models/mech_bastion_chassis.glb' })
-  }
+  GltfContainer.create(ent, { src: robotModelPath(robot.classId) })
 
   const turret = engine.addEntity()
   Transform.create(turret, {
-    position: Vector3.create(0, 0, 0),
+    position: Vector3.create(0, hasSeparateTurret(robot.classId) ? 0 : -100, 0),
     rotation: Quaternion.fromEulerDegrees(robot.turretPitch ?? 0, remoteTurretYaw(robot), 0),
     parent: ent
   })
-  GltfContainer.create(turret, { src: 'assets/models/mech_bastion_turret.glb' })
+  if (hasSeparateTurret(robot.classId)) {
+    GltfContainer.create(turret, { src: 'assets/models/mech_bastion_turret.glb' })
+  }
 
   const label = engine.addEntity()
   Transform.create(label, {
@@ -368,12 +368,27 @@ function spawnRemoteRobot(robot: RobotState): void {
 
   remoteRobotEntities.set(robot.id, ent)
   remoteTurretEntities.set(robot.id, turret)
+  remoteRobotClasses.set(robot.id, robot.classId)
   remoteRobotLabels.set(robot.id, label)
   console.log('[Net] Robot joined:', robot.id, robot.isBot ? '(bot)' : '(player)')
 }
 
 function updateRemoteRobot(robot: RobotState): void {
   const ent = remoteRobotEntities.get(robot.id)!
+  if (remoteRobotClasses.get(robot.id) !== robot.classId) {
+    GltfContainer.getMutable(ent).src = robotModelPath(robot.classId)
+    const turret = remoteTurretEntities.get(robot.id)
+    if (turret !== undefined) {
+      if (hasSeparateTurret(robot.classId)) {
+        GltfContainer.createOrReplace(turret, { src: 'assets/models/mech_bastion_turret.glb' })
+        Transform.getMutable(turret).position = Vector3.create(0, 0, 0)
+      } else {
+        GltfContainer.deleteFrom(turret)
+        Transform.getMutable(turret).position = Vector3.create(0, -100, 0)
+      }
+    }
+    remoteRobotClasses.set(robot.id, robot.classId)
+  }
   const t = Transform.getMutable(ent)
 
   // Simple lerp toward server position for smooth rendering
@@ -384,7 +399,7 @@ function updateRemoteRobot(robot: RobotState): void {
   if (robot.state === 'DESTROYED') {
     t.position.y = -100 // Hide destroyed robots underground
   } else {
-    t.position.y = 0.1
+    t.position.y = 0.2
   }
 
   t.rotation = Quaternion.fromEulerDegrees(0, robot.chassisYaw, 0)

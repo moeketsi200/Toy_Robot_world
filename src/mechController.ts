@@ -22,6 +22,7 @@ import { MechPilot, MechStateEnum, Obstacle, PitHazard, LaserProjectile } from '
 import { initNetworkClient, netSendInput, netSendAction, netSelectRobot, netJoinWar, netLeaveWar, disconnectNetworkClient, isMultiplayerConnected } from './networkClient'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { canUseRobotInMode, getGameMode, GameMode, setGameMode } from './gameMode'
+import { hasSeparateTurret, robotModelPath, SELECTABLE_ROBOT_CLASSES } from './robotModels'
 
 export let playerMechEntity: Entity | null = null
 export let mechCameraEntity: Entity | null = null
@@ -131,8 +132,9 @@ export function getAimReticlePosition(): { left: number; top: number } {
 }
 
 export function selectRobotClass(classId: RobotClassId): boolean {
-  if (!canUseRobotInMode(classId) || (playerMechEntity && MechPilot.getOrNull(playerMechEntity)?.isPiloting)) return false
+  if (!SELECTABLE_ROBOT_CLASSES.includes(classId) || !canUseRobotInMode(classId) || (playerMechEntity && MechPilot.getOrNull(playerMechEntity)?.isPiloting)) return false
   selectedClassId = classId
+  updatePlayerRobotModel(classId)
   netSelectRobot(classId)
   return true
 }
@@ -141,6 +143,7 @@ export function chooseGameMode(mode: GameMode): void {
   if (playerMechEntity && MechPilot.getOrNull(playerMechEntity)?.isPiloting) exitMech()
   setGameMode(mode)
   if (!canUseRobotInMode(selectedClassId)) selectedClassId = 'bastion'
+  updatePlayerRobotModel(selectedClassId)
   if (mode === 'solo') disconnectNetworkClient()
   else initNetworkClient()
 }
@@ -156,9 +159,7 @@ export function initMech() {
     position: Vector3.create(16, -100, 16), // Hidden underground initially
     scale: Vector3.create(1, 1, 1)
   })
-  GltfContainer.create(playerMechEntity, {
-    src: 'assets/models/mech_bastion_chassis.glb'
-  })
+  GltfContainer.create(playerMechEntity, { src: robotModelPath(selectedClassId) })
 
   playerTurretEntity = engine.addEntity()
   Transform.create(playerTurretEntity, {
@@ -166,9 +167,7 @@ export function initMech() {
     rotation: Quaternion.fromEulerDegrees(0, 180, 0),
     parent: playerMechEntity
   })
-  GltfContainer.create(playerTurretEntity, {
-    src: 'assets/models/mech_bastion_turret.glb'
-  })
+  updatePlayerRobotModel(selectedClassId)
 
   MechPilot.create(playerMechEntity, {
     isPiloting: false,
@@ -242,7 +241,7 @@ export function enterMech() {
   }
 
   // Spawn mech at arena start position
-  Transform.getMutable(playerMechEntity).position = Vector3.create(32, 0.1, 14)
+  Transform.getMutable(playerMechEntity).position = Vector3.create(32, 0.2, 30.12)
   Transform.getMutable(playerMechEntity).rotation = Quaternion.fromEulerDegrees(0, 180, 0)
 
   // Activate virtual camera
@@ -267,6 +266,20 @@ export function enterMech() {
   if (getGameMode() === 'multiplayer') netJoinWar(selectedClassId)
 
   console.log(`Player boarded ${robotClass.name} Combat Mech!`)
+}
+
+function updatePlayerRobotModel(classId: RobotClassId): void {
+  if (!playerMechEntity) return
+  GltfContainer.getMutable(playerMechEntity).src = robotModelPath(classId)
+  if (!playerTurretEntity) return
+
+  if (hasSeparateTurret(classId)) {
+    GltfContainer.createOrReplace(playerTurretEntity, { src: 'assets/models/mech_bastion_turret.glb' })
+    Transform.getMutable(playerTurretEntity).position = Vector3.create(0, 0, 0)
+  } else {
+    GltfContainer.deleteFrom(playerTurretEntity)
+    Transform.getMutable(playerTurretEntity).position = Vector3.create(0, -100, 0)
+  }
 }
 
 export function exitMech() {
@@ -392,8 +405,8 @@ export function mechControlSystem(dt: number) {
     const nextZ = transform.position.z + forwardZ * moveDelta
 
     // Boundary check (keep inside 64x64 arena)
-    const clampedX = Math.max(2.5, Math.min(61.5, nextX))
-    const clampedZ = Math.max(2.5, Math.min(61.5, nextZ))
+    const clampedX = Math.max(8.38, Math.min(55.62, nextX))
+    const clampedZ = Math.max(7.53, Math.min(55.53, nextZ))
 
     // Obstacle collision check
     let obstructed = false
@@ -507,7 +520,7 @@ function normalizeYaw(yaw: number): number {
 }
 
 function updateTurretVisual(turretYaw: number, chassisYaw: number, turretPitch: number): void {
-  if (!playerTurretEntity || !Transform.has(playerTurretEntity)) return
+  if (!playerTurretEntity || !Transform.has(playerTurretEntity) || !GltfContainer.has(playerTurretEntity)) return
   Transform.getMutable(playerTurretEntity).rotation = Quaternion.fromEulerDegrees(
     turretPitch,
     normalizeYaw(turretYaw - chassisYaw),

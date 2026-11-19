@@ -20,35 +20,39 @@ interface BotConfig {
 const BOTS_CONFIG: BotConfig[] = [
   {
     id: 'Sentinel-Alpha (Citadel)',
-    startPos: Vector3.create(32, 0.1, 40),
+    startPos: arenaPoint(32, 39),
     waypoints: [
-      Vector3.create(22, 0.1, 24),
-      Vector3.create(42, 0.1, 24),
-      Vector3.create(42, 0.1, 44),
-      Vector3.create(22, 0.1, 44)
+      arenaPoint(22, 26),
+      arenaPoint(42, 26),
+      arenaPoint(42, 41),
+      arenaPoint(22, 41)
     ]
   },
   {
     id: 'Sentinel-Bravo (West Flank)',
-    startPos: Vector3.create(16, 0.1, 30),
+    startPos: arenaPoint(22, 30),
     waypoints: [
-      Vector3.create(12, 0.1, 18),
-      Vector3.create(22, 0.1, 18),
-      Vector3.create(22, 0.1, 48),
-      Vector3.create(12, 0.1, 48)
+      arenaPoint(19, 23),
+      arenaPoint(25, 23),
+      arenaPoint(25, 41),
+      arenaPoint(19, 41)
     ]
   },
   {
     id: 'Sentinel-Charlie (East Flank)',
-    startPos: Vector3.create(48, 0.1, 30),
+    startPos: arenaPoint(42, 30),
     waypoints: [
-      Vector3.create(42, 0.1, 18),
-      Vector3.create(52, 0.1, 18),
-      Vector3.create(52, 0.1, 48),
-      Vector3.create(42, 0.1, 48)
+      arenaPoint(39, 23),
+      arenaPoint(45, 23),
+      arenaPoint(45, 41),
+      arenaPoint(39, 41)
     ]
   }
 ]
+
+function arenaPoint(x: number, z: number): Vector3 {
+  return Vector3.create(32 + (x - 32) * (64 / 42), 0.2, 32 + (z - 32) * (64 / 34))
+}
 
 const botLabelMap = new Map<Entity, Entity>()
 const botTurretMap = new Map<Entity, Entity>()

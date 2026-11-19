@@ -22,29 +22,21 @@ export class GameWorld {
   private classLocked = new Set<string>()
   private pendingEvents: GameEvent[] = []
 
-  // 4x4 Arena Obstacles (exact match with client)
+  // Cyber Battle Zone barricades (match the client arena bounds)
   private obstacles: BoxCollider[] = [
-    this.createBox(28, 32, 3.2, 1.2),
-    this.createBox(36, 32, 3.2, 1.2),
-    this.createBox(18, 20, 3.2, 1.2),
-    this.createBox(24, 16, 1.2, 3.2),
-    this.createBox(46, 20, 3.2, 1.2),
-    this.createBox(40, 16, 1.2, 3.2),
-    this.createBox(18, 44, 3.2, 1.2),
-    this.createBox(24, 48, 1.2, 3.2),
-    this.createBox(46, 44, 3.2, 1.2),
-    this.createBox(40, 48, 1.2, 3.2),
-    this.createBox(10, 32, 1.2, 3.5),
-    this.createBox(54, 32, 1.2, 3.5),
-    this.createBox(32, 52, 3.5, 1.2)
+    this.createBox(32, 57.41, 51.2, 2.64),
+    this.createBox(5.14, 32.66, 2.29, 46.49),
+    this.createBox(58.86, 32.66, 2.29, 46.49),
+    this.createBox(14.1, 4.59, 23.62, 2.45),
+    this.createBox(49.9, 4.59, 23.62, 2.45)
   ]
 
   // Bottomless Pits
   private pits: PitCollider[] = [
-    { centerX: 24, centerZ: 26, radius: 2.8 },
-    { centerX: 40, centerZ: 26, radius: 2.8 },
-    { centerX: 24, centerZ: 38, radius: 2.8 },
-    { centerX: 40, centerZ: 38, radius: 2.8 }
+    { centerX: 18.29, centerZ: 35.76, radius: 5.27 },
+    { centerX: 45.71, centerZ: 35.76, radius: 5.27 },
+    { centerX: 18.29, centerZ: 48.94, radius: 5.27 },
+    { centerX: 45.71, centerZ: 48.94, radius: 5.27 }
   ]
 
   constructor() {
@@ -70,8 +62,8 @@ export class GameWorld {
       classId,
       name: name || `Pilot_${robotId.slice(0, 4)}`,
       isBot: false,
-      x: 32 + (Math.random() - 0.5) * 6,
-      z: 14 + (Math.random() - 0.5) * 4,
+      x: 32 + (Math.random() - 0.5) * 6.1,
+      z: 30.12 + (Math.random() - 0.5) * 7.5,
       chassisYaw: 0,
       turretYaw: 0,
       turretPitch: 4.5,
@@ -302,7 +294,7 @@ export class GameWorld {
           robot.state = 'NORMAL'
           robot.shields = robot.maxShields
           robot.x = 32
-          robot.z = 14
+          robot.z = 30.12
         }
         continue
       } else if (robot.state === 'DESTROYED') {
@@ -312,7 +304,7 @@ export class GameWorld {
           robot.shields = robot.maxShields
           robot.ammo = robot.maxAmmo
           robot.x = 32
-          robot.z = 14
+          robot.z = 30.12
         }
         continue
       }
@@ -364,8 +356,8 @@ export class GameWorld {
   }
 
   private tryMove(robot: RobotState, dx: number, dz: number) {
-    const nextX = Math.max(2.5, Math.min(61.5, robot.x + dx))
-    const nextZ = Math.max(2.5, Math.min(61.5, robot.z + dz))
+    const nextX = Math.max(8.38, Math.min(55.62, robot.x + dx))
+    const nextZ = Math.max(7.53, Math.min(55.53, robot.z + dz))
 
     // Obstacle collision
     for (const obs of this.obstacles) {
@@ -409,7 +401,7 @@ export class GameWorld {
     this.tryMove(bot, Math.sin(rad) * 3.5 * dt, Math.cos(rad) * 3.5 * dt)
 
     // Random turn when near borders
-    if (bot.x <= 15 || bot.x >= 48 || bot.z <= 20 || bot.z >= 50) {
+    if (bot.x <= 17 || bot.x >= 47 || bot.z <= 20 || bot.z >= 44) {
       bot.chassisYaw += 90
     }
   }

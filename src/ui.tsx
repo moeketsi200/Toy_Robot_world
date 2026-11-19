@@ -8,6 +8,7 @@ import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { GameMode, getGameMode, modeLabel } from './gameMode'
 import { getNetworkMessage, initNetworkClient, isMultiplayerConnected, isNetworkConnecting } from './networkClient'
 import { createTournament, getCurrentTournamentView, getTournamentMessage, playerIsTournamentAdmin, refreshTournament, registerForTournament, startTournament } from './tournamentClient'
+import { SELECTABLE_ROBOT_CLASSES } from './robotModels'
 
 let tournamentTitle = 'Robot Rumble'
 let tournamentStartsAt = ''
@@ -257,7 +258,7 @@ const uiComponent = () => {
           />
           <Label value="CHOOSE YOUR ROBOT" fontSize={15} color={Color4.create(0, 0.9, 1, 1)} uiTransform={{ height: 23 }} />
           <UiEntity uiTransform={{ width: '100%', height: 194, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
-            {(Object.keys(ROBOT_CLASSES) as RobotClassId[]).map((id) => {
+            {SELECTABLE_ROBOT_CLASSES.map((id) => {
               const robot = ROBOT_CLASSES[id]
               const unlocked = isRobotSelectable(id)
               const selected = getSelectedClassId() === id

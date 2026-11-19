@@ -9,7 +9,7 @@ import { networkSystem } from './networkClient'
 export function main() {
   console.log('Initializing Toy Robot Worlds: Arena Scene...')
 
-  // 1. Build Arena environment (floor, walls, obstacles, pits, hangar terminal)
+  // 1. Build arena environment and Blender-made entrance hub
   buildArena()
 
   // 2. Initialize Player Mech and Virtual Camera rig
