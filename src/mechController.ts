@@ -103,11 +103,13 @@ function updateNativeJoystickFromAvatar(dt: number): void {
   if (!avatar) return
   const dx = avatar.position.x - avatarControlAnchor.x
   const dz = avatar.position.z - avatarControlAnchor.z
-  const yaw = (MechPilot.getOrNull(playerMechEntity)?.chassisYaw ?? 0) * Math.PI / 180
-  const forwardX = Math.sin(yaw)
-  const forwardZ = Math.cos(yaw)
-  const forward = dx * forwardX + dz * forwardZ
-  const lateral = dx * forwardZ - dz * forwardX
+  // Explorer's mobile joystick moves the avatar relative to the view. Project
+  // that displacement against the mech camera, not the independently turning
+  // chassis. The camera's forward direction at yaw 0 is gameplay +Z, while
+  // native avatar locomotion reports forward as -Z.
+  const viewYaw = cameraAimYaw * Math.PI / 180
+  const forward = -(dx * Math.sin(viewYaw) + dz * Math.cos(viewYaw))
+  const lateral = dx * Math.cos(viewYaw) - dz * Math.sin(viewYaw)
   // The Explorer's native joystick moves the avatar transform. Ignore tiny
   // locomotion/camera noise before turning that displacement into mech input.
   const deadZone = 0.02
@@ -327,6 +329,8 @@ export function exitMech() {
   avatarControlAnchor = undefined
   avatarMoveAxis = 0
   avatarTurnAxis = 0
+  smoothedAvatarMoveAxis = 0
+  smoothedAvatarTurnAxis = 0
   pilot.isPiloting = false
   pilot.state = MechStateEnum.NORMAL
 
@@ -338,9 +342,6 @@ export function exitMech() {
       mode: { $case: 'standard', standard: { disableAll: true } }
     })
   }
-
-  // Move mech underground
-  Transform.getMutable(playerMechEntity).position = Vector3.create(16, -100, 16)
 
   // Restore camera & player locomotion
   MainCamera.deleteFrom(engine.CameraEntity)
