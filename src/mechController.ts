@@ -45,6 +45,11 @@ let selectedClassId: RobotClassId = 'bastion'
 let aimPitch = 4.5
 let cameraAimYaw = 0
 let lastAimPointer: { x: number; y: number } | undefined
+let mobileAimIdleTime = 0
+let mobileFirePointerActive = false
+let mobileFirePointerMoved = false
+let mobileFirePointerStartedOnHud = false
+let mobileFirePointerStart: { x: number; y: number } | undefined
 let smoothedMobileAimX = 0
 let smoothedMobileAimY = 0
 let mobileAimSensitivity = 1
@@ -165,6 +170,25 @@ export function isRobotSelectable(classId: RobotClassId): boolean {
 }
 
 export function initMech() {
+  // Keep the deployment screen stationary. Mobile players get the native
+  // joystick back only after boarding a mech.
+  TouchScreenControls.createOrReplace(engine.RootEntity, {
+    hideJoystick: true,
+    hideCrosshair: false,
+    mainAction: InputAction.IA_JUMP,
+    touchInputs: [
+      { inputAction: InputAction.IA_POINTER, hide: false },
+      { inputAction: InputAction.IA_PRIMARY, hide: false },
+      { inputAction: InputAction.IA_SECONDARY, hide: false },
+      { inputAction: InputAction.IA_ACTION_3, hide: false }
+    ]
+  })
+  if (!isMobile()) {
+    InputModifier.createOrReplace(engine.PlayerEntity, {
+      mode: { $case: 'standard', standard: { disableAll: true } }
+    })
+  }
+
   // Create player mech entity
   playerMechEntity = engine.addEntity()
   Transform.create(playerMechEntity, {
@@ -225,7 +249,7 @@ export function enterMech() {
   fireRequested = false
   reloadRequested = false
   repairRequested = false
-  lastAimPointer = undefined
+  resetMobileInputState()
   smoothedMobileAimX = 0
   smoothedMobileAimY = 0
   const avatarTransform = Transform.getOrNull(engine.PlayerEntity)
@@ -273,16 +297,6 @@ export function enterMech() {
     PointerLock.createOrReplace(engine.CameraEntity, { isPointerLocked: true })
   }
 
-  // Lock default avatar locomotion
-  if (!isMobile()) {
-    InputModifier.createOrReplace(engine.PlayerEntity, {
-      mode: {
-        $case: 'standard',
-        standard: { disableAll: true }
-      }
-    })
-  }
-
   if (getGameMode() === 'multiplayer') netJoinWar(selectedClassId)
 
   console.log(`Player boarded ${robotClass.name} Combat Mech!`)
@@ -309,7 +323,7 @@ export function exitMech() {
   fireRequested = false
   reloadRequested = false
   repairRequested = false
-  lastAimPointer = undefined
+  resetMobileInputState()
   avatarControlAnchor = undefined
   avatarMoveAxis = 0
   avatarTurnAxis = 0
@@ -317,6 +331,13 @@ export function exitMech() {
   pilot.state = MechStateEnum.NORMAL
 
   if (getGameMode() === 'multiplayer') netLeaveWar()
+
+  if (isMobile()) TouchScreenControls.hideJoystick()
+  else {
+    InputModifier.createOrReplace(engine.PlayerEntity, {
+      mode: { $case: 'standard', standard: { disableAll: true } }
+    })
+  }
 
   // Move mech underground
   Transform.getMutable(playerMechEntity).position = Vector3.create(16, -100, 16)
@@ -327,7 +348,6 @@ export function exitMech() {
     PointerLock.getMutable(engine.CameraEntity).isPointerLocked = previousPointerLockState
     previousPointerLockState = undefined
   }
-  InputModifier.deleteFrom(engine.PlayerEntity)
   console.log('Player exited mech, returned to Hangar.')
 }
 
@@ -367,13 +387,21 @@ export function mechControlSystem(dt: number) {
       )
       pilot.stateTimer -= dt
     }
-    if (!serverAuthoritative && pilot.stateTimer <= 0) {
+    if (!serverAuthoritative && (transform.position.y < -1.5 || pilot.stateTimer <= 0)) {
       pilot.deaths++
-      exitMech()
+      transform.position = Vector3.create(32, 0.2, 30.12)
+      transform.rotation = Quaternion.fromEulerDegrees(0, 180, 0)
+      pilot.chassisYaw = 0
+      pilot.state = MechStateEnum.NORMAL
+      pilot.stateTimer = 0
+      console.log('Mech recovered to the arena after a fall.')
       return
     }
     return // Skip normal movement while falling
   }
+
+  // Keep the locally simulated mech on the arena deck during normal play.
+  if (!serverAuthoritative) transform.position.y = 0.2
 
   // 2. Keyboard & Touch Inputs
   const isImmobilized = pilot.state === MechStateEnum.REPAIRING || pilot.state === MechStateEnum.FALLING
@@ -462,7 +490,7 @@ export function mechControlSystem(dt: number) {
     }
   }
 
-  updateAimAndBarrel(pilot, transform.position)
+  updateAimAndBarrel(pilot, transform.position, dt)
 
   updateTurretVisual(pilot.turretYaw, pilot.chassisYaw, pilot.turretPitch)
 
@@ -497,9 +525,8 @@ export function mechControlSystem(dt: number) {
 
   // Fire Lasers [LMB / Pointer]
   lastShotTime += dt
-  if (inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
-    // Mobile firing is controlled by the HUD button; desktop uses pointer fire.
-    if (!isMobile()) fireRequested = true
+  if (!isMobile() && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+    fireRequested = true
   }
   if (pilot.state !== MechStateEnum.NORMAL) fireRequested = false
   const fireInput = fireRequested
@@ -507,7 +534,7 @@ export function mechControlSystem(dt: number) {
     if (serverAuthoritative) {
       netSendAction('fire')
       lastShotTime = 0
-      if (!isMobile()) fireRequested = false
+      fireRequested = false
     } else if (pilot.ammo > 0) {
       const shotCost = robotClass.shotStyle === 'burst' ? 3 : 1
       if (pilot.ammo < shotCost) {
@@ -517,7 +544,7 @@ export function mechControlSystem(dt: number) {
       }
       pilot.ammo -= shotCost
       lastShotTime = 0
-      if (!isMobile()) fireRequested = false
+      fireRequested = false
       netSendAction('fire')
       firePlayerLasers(transform.position, pilot.turretYaw, robotClass.shotStyle, robotClass.damage)
 
@@ -549,32 +576,57 @@ function updateTurretVisual(turretYaw: number, chassisYaw: number, turretPitch: 
   )
 }
 
-function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; chassisYaw: number; classId: string }, mechPosition: Vector3): void {
+function resetMobileInputState(): void {
+  lastAimPointer = undefined
+  mobileAimIdleTime = 0
+  mobileFirePointerActive = false
+  mobileFirePointerMoved = false
+  mobileFirePointerStartedOnHud = false
+  mobileFirePointerStart = undefined
+  smoothedMobileAimX = 0
+  smoothedMobileAimY = 0
+}
+
+function isMobileHudPoint(point: { x: number; y: number } | undefined): boolean {
+  return !!point && point.x <= 340 && point.y >= 205 && point.y <= 475
+}
+
+function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; chassisYaw: number; classId: string }, mechPosition: Vector3, dt: number): void {
   const pointer = PrimaryPointerInfo.getOrNull(engine.RootEntity)
   let deltaX = 0
   let deltaY = 0
 
   if (isMobile()) {
-    // Derive touch drag from position samples. Only the right half is an aim
-    // zone, leaving the left side for movement controls and avoiding HUD taps.
+    // Screen dragging aims independently of the native action buttons. Leave
+    // the left half for movement and the far-right strip for touch controls.
     const position = pointer?.screenCoordinates
     const canvasWidth = UiCanvasInformation.getOrNull(engine.RootEntity)?.width ?? 1920
     const canvasHeight = UiCanvasInformation.getOrNull(engine.RootEntity)?.height ?? 1080
-    if (position && position.x >= canvasWidth * 0.5 && position.y <= canvasHeight * 0.72) {
-      if (lastAimPointer) {
+    updateMobileFireGesture(position)
+    const inAimZone = !!position && position.x >= canvasWidth * 0.45 && position.x <= canvasWidth * 0.9 &&
+      position.y >= canvasHeight * 0.1 && position.y <= canvasHeight * 0.85 && !isMobileHudPoint(position)
+
+    if (inAimZone && position) {
+      if (lastAimPointer && mobileAimIdleTime < 0.18) {
         deltaX = position.x - lastAimPointer.x
         deltaY = position.y - lastAimPointer.y
       }
+      if (lastAimPointer && (position.x !== lastAimPointer.x || position.y !== lastAimPointer.y)) {
+        mobileAimIdleTime = 0
+      } else {
+        mobileAimIdleTime += dt
+      }
       lastAimPointer = { x: position.x, y: position.y }
-      smoothedMobileAimX += (deltaX - smoothedMobileAimX) * MOBILE_AIM_SMOOTHING
-      smoothedMobileAimY += (deltaY - smoothedMobileAimY) * MOBILE_AIM_SMOOTHING
-      deltaX = smoothedMobileAimX
-      deltaY = smoothedMobileAimY
+      if (mobileAimIdleTime >= 0.18) lastAimPointer = undefined
     } else {
-      lastAimPointer = undefined
-      smoothedMobileAimX = 0
-      smoothedMobileAimY = 0
+      mobileAimIdleTime += dt
+      if (mobileAimIdleTime >= 0.18) lastAimPointer = undefined
     }
+
+    smoothedMobileAimX += (deltaX - smoothedMobileAimX) * MOBILE_AIM_SMOOTHING
+    smoothedMobileAimY += (deltaY - smoothedMobileAimY) * MOBILE_AIM_SMOOTHING
+    deltaX = smoothedMobileAimX
+    deltaY = smoothedMobileAimY
   } else {
     // The desktop cursor is locked while piloting, so screenDelta gives smooth
     // mouse-look without moving the centered reticle toward a screen edge.
@@ -625,6 +677,43 @@ function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; cha
   if (mechCameraEntity && Transform.has(mechCameraEntity)) {
     const camera = Transform.getMutable(mechCameraEntity)
     camera.rotation = Quaternion.fromEulerDegrees(aimPitch, normalizeYaw(cameraAimYaw - pilot.chassisYaw + 180), 0)
+  }
+}
+
+function updateMobileFireGesture(position: { x: number; y: number } | undefined): void {
+  const pointerDown = inputSystem.isPressed(InputAction.IA_POINTER)
+  const pointerPressed = inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)
+  const pointerReleased = inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_UP)
+
+  if (pointerPressed) {
+    mobileFirePointerActive = true
+    mobileFirePointerMoved = false
+    mobileFirePointerStart = position ? { x: position.x, y: position.y } : undefined
+    mobileFirePointerStartedOnHud = isMobileHudPoint(mobileFirePointerStart)
+  }
+
+  if (mobileFirePointerActive && (pointerDown || pointerReleased) && position) {
+    if (!mobileFirePointerStart) {
+      mobileFirePointerStart = { x: position.x, y: position.y }
+      mobileFirePointerStartedOnHud = isMobileHudPoint(position)
+    } else if (Math.hypot(position.x - mobileFirePointerStart.x, position.y - mobileFirePointerStart.y) >= 7) {
+      mobileFirePointerMoved = true
+    }
+  }
+
+  if (pointerReleased && mobileFirePointerActive) {
+    if (!mobileFirePointerMoved && !mobileFirePointerStartedOnHud && !isMobileHudPoint(position)) {
+      fireRequested = true
+    }
+    mobileFirePointerActive = false
+    mobileFirePointerMoved = false
+    mobileFirePointerStartedOnHud = false
+    mobileFirePointerStart = undefined
+  } else if (!pointerDown && !pointerPressed && !pointerReleased) {
+    mobileFirePointerActive = false
+    mobileFirePointerMoved = false
+    mobileFirePointerStartedOnHud = false
+    mobileFirePointerStart = undefined
   }
 }
 

@@ -3,7 +3,7 @@ import { Color4 } from '@dcl/sdk/math'
 import ReactEcs, { Button, Input, Label, ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs'
 import { isMobile } from '@dcl/sdk/platform'
 import { MechPilot, MechStateEnum } from './components'
-import { playerMechEntity, enterMech, exitMech, requestFire, stopFire, requestReload, requestRepair, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition, adjustMobileAimSensitivity, getMobileAimSensitivity, adjustDesktopAimSensitivity, getDesktopAimSensitivity, toggleMobileAimInvertY, isMobileAimInverted } from './mechController'
+import { playerMechEntity, enterMech, exitMech, selectRobotClass, getSelectedClassId, chooseGameMode, isRobotSelectable, getAimReticlePosition, adjustMobileAimSensitivity, getMobileAimSensitivity, adjustDesktopAimSensitivity, getDesktopAimSensitivity, toggleMobileAimInvertY, isMobileAimInverted } from './mechController'
 import { ROBOT_CLASSES, RobotClassId } from '../server/src/types'
 import { GameMode, getGameMode, modeLabel } from './gameMode'
 import { getNetworkMessage, initNetworkClient, isMultiplayerConnected, isNetworkConnecting } from './networkClient'
@@ -143,14 +143,14 @@ const uiComponent = () => {
         </UiEntity>
       )}
 
-      {/* 4. Bottom-Right Weapons & Actions (When Piloting) */}
+      {/* 4. Weapons & Actions (When Piloting) */}
       {isPiloting && (
         <UiEntity
           uiTransform={{
             width: isMobile() ? 320 : 340,
             height: isMobile() ? 246 : 214,
             positionType: 'absolute',
-            position: { bottom: isMobile() ? 14 : 20, right: isMobile() ? 12 : 20 },
+            position: isMobile() ? { top: 220, left: 12 } : { bottom: 20, right: 20 },
             flexDirection: 'column',
             padding: 12,
             justifyContent: 'space-between'
@@ -169,7 +169,7 @@ const uiComponent = () => {
           />
 
           <Label
-            value={`[LMB] Fire ${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].shotStyle} weapon (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].damage} damage)`}
+            value={`${isMobile() ? 'Tap screen' : '[LMB]'} Fire ${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].shotStyle} weapon (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].damage} damage)`}
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
@@ -187,22 +187,17 @@ const uiComponent = () => {
             uiTransform={{ height: 16 }}
           />
           <Label
-            value={getGameMode() === 'solo'
+            value={isMobile()
+              ? 'Joystick: drive | drag: aim | tap: fire\nE: reload | F: repair | 1: exit'
+              : getGameMode() === 'solo'
               ? '[W/S] Drive | [A/D] Turn | [1] Exit Mech'
-              : isMobile()
-              ? 'DCL joystick: drive/steer | drag upper-right: aim'
               : 'Mouse look: aim | W/S drive | A/D turn | LMB fire | E reload | F repair'}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
-            uiTransform={{ height: 16 }}
+            uiTransform={{ height: isMobile() ? 32 : 16 }}
           />
           {isMobile() && (
-            <UiEntity uiTransform={{ width: '100%', height: 98, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
-              <UiEntity uiTransform={{ width: '100%', height: 44, flexDirection: 'row', justifyContent: 'center' }}>
-                <Button value="FIRE" variant="primary" fontSize={13} uiTransform={{ width: 104, height: 42, margin: 2 }} onMouseDown={requestFire} onMouseUp={stopFire} onMouseLeave={stopFire} />
-                <Button value="RELOAD" variant="secondary" fontSize={10} uiTransform={{ width: 84, height: 38, margin: 2 }} onMouseDown={requestReload} />
-                <Button value="REPAIR" variant="secondary" fontSize={10} uiTransform={{ width: 84, height: 38, margin: 2 }} onMouseDown={requestRepair} />
-              </UiEntity>
+            <UiEntity uiTransform={{ width: '100%', height: 58, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
               <UiEntity uiTransform={{ width: '100%', height: 26, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                 <Button value="AIM −" variant="secondary" fontSize={10} uiTransform={{ width: 76, height: 26, margin: 2 }} onMouseDown={() => adjustMobileAimSensitivity(-0.25)} />
                 <Label value={`AIM ${getMobileAimSensitivity().toFixed(2)}x`} fontSize={10} color={Color4.create(0.8, 0.85, 0.9, 1)} uiTransform={{ width: 84, height: 20 }} />
