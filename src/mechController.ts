@@ -36,7 +36,7 @@ let repairRequested = false
 const SHOT_COOLDOWN = 0.35
 const AIM_SENSITIVITY = 0.14
 const MOBILE_AIM_SENSITIVITY = 0.08
-const MOBILE_AIM_SMOOTHING = 0.34
+const MOBILE_AIM_SMOOTHING_SECONDS = 0.035
 const MIN_AIM_PITCH = -10
 const MAX_AIM_PITCH = 55
 const MUZZLE_FORWARD_DISTANCE = 2.75
@@ -439,8 +439,8 @@ export function mechControlSystem(dt: number) {
     }
     networkMoveDir = Math.max(-1, Math.min(1, moveAxis))
 
-    // Spacebar Thruster Dash
-    if (inputSystem.isPressed(InputAction.IA_JUMP) && pilot.dashCooldown <= 0) {
+    // Space / the mobile jump button triggers one dash per press.
+    if (inputSystem.isTriggered(InputAction.IA_JUMP, PointerEventType.PET_DOWN) && pilot.dashCooldown <= 0) {
       moveDelta += robotClass.dashDistance
       pilot.dashCooldown = robotClass.dashCooldown
       netSendAction('dash')
@@ -526,11 +526,20 @@ export function mechControlSystem(dt: number) {
 
   // Fire Lasers [LMB / Pointer]
   lastShotTime += dt
-  if (!isMobile() && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
-    fireRequested = true
+  let desktopFireHeld = false
+  if (!isMobile()) {
+    // The free cursor can click HUD controls, so only let a locked gameplay
+    // cursor fire. Holding the mouse button repeats shots at the robot's rate.
+    const pointerLocked = PointerLock.getOrNull(engine.CameraEntity)?.isPointerLocked === true
+    desktopFireHeld = pointerLocked && inputSystem.isPressed(InputAction.IA_POINTER)
+    if (!pointerLocked) {
+      fireRequested = false
+    } else if (inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+      fireRequested = true
+    }
   }
   if (pilot.state !== MechStateEnum.NORMAL) fireRequested = false
-  const fireInput = fireRequested
+  const fireInput = fireRequested || desktopFireHeld
   if (fireInput && pilot.state === MechStateEnum.NORMAL && lastShotTime >= robotClass.fireInterval) {
     if (serverAuthoritative) {
       netSendAction('fire')
@@ -624,8 +633,9 @@ function updateAimAndBarrel(pilot: { turretYaw: number; turretPitch: number; cha
       if (mobileAimIdleTime >= 0.18) lastAimPointer = undefined
     }
 
-    smoothedMobileAimX += (deltaX - smoothedMobileAimX) * MOBILE_AIM_SMOOTHING
-    smoothedMobileAimY += (deltaY - smoothedMobileAimY) * MOBILE_AIM_SMOOTHING
+    const smoothing = 1 - Math.exp(-Math.max(0, dt) / MOBILE_AIM_SMOOTHING_SECONDS)
+    smoothedMobileAimX += (deltaX - smoothedMobileAimX) * smoothing
+    smoothedMobileAimY += (deltaY - smoothedMobileAimY) * smoothing
     deltaX = smoothedMobileAimX
     deltaY = smoothedMobileAimY
   } else {

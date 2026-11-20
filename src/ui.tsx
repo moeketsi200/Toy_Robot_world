@@ -135,7 +135,7 @@ const uiComponent = () => {
 
           {/* Dash Cooldown */}
           <Label
-            value={`THRUSTER DASH: ${(pilot?.dashCooldown ?? 0) > 0 ? (pilot?.dashCooldown ?? 0).toFixed(1) + 's' : 'READY [SPACE]'}`}
+            value={`BOOST: ${(pilot?.dashCooldown ?? 0) > 0 ? (pilot?.dashCooldown ?? 0).toFixed(1) + 's' : isMobile() ? 'READY [JUMP]' : 'READY [SPACE]'}`}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.1, 1)}
             uiTransform={{ height: 18 }}
@@ -148,7 +148,7 @@ const uiComponent = () => {
         <UiEntity
           uiTransform={{
             width: isMobile() ? 320 : 340,
-            height: isMobile() ? 246 : 214,
+            height: isMobile() ? 246 : 230,
             positionType: 'absolute',
             position: isMobile() ? { top: 220, left: 12 } : { bottom: 20, right: 20 },
             flexDirection: 'column',
@@ -169,32 +169,30 @@ const uiComponent = () => {
           />
 
           <Label
-            value={`${isMobile() ? 'Tap screen' : '[LMB]'} Fire ${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].shotStyle} weapon (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].damage} damage)`}
+            value={`${isMobile() ? 'Tap' : 'Hold [LMB]'} Fire ${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].shotStyle} weapon (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].damage} damage)`}
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
           />
           <Label
-            value={`[E] Reload Ammo (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].reloadTime.toFixed(1)}s)`}
+            value={`${isMobile() ? 'Reload Ammo' : '[E] Reload Ammo'} (${ROBOT_CLASSES[(pilot?.classId as RobotClassId) ?? 'bastion'].reloadTime.toFixed(1)}s)`}
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
           />
           <Label
-            value="[F] Repair Shields (immobilized while repairing)"
+            value={isMobile() ? 'Repair Shields (immobilized while repairing)' : '[F] Repair Shields (immobilized while repairing)'}
             fontSize={12}
             color={Color4.create(0.8, 0.85, 0.9, 1)}
             uiTransform={{ height: 16 }}
           />
           <Label
             value={isMobile()
-              ? 'Joystick: drive | drag: aim | tap: fire\nE: reload | F: repair | 1: exit'
-              : getGameMode() === 'solo'
-              ? '[W/S] Drive | [A/D] Turn | [1] Exit Mech'
-              : 'Mouse look: aim | W/S drive | A/D turn | LMB fire | E reload | F repair'}
+              ? 'Joystick: drive | drag: aim | tap: fire\nJump button: boost\nButtons: reload / repair / exit'
+              : 'Mouse: aim | W/S: drive | A/D: turn | hold LMB: fire\nSpace: boost | E: reload | F: repair | 1: exit'}
             fontSize={12}
             color={Color4.create(0.9, 0.7, 0.2, 1)}
-            uiTransform={{ height: isMobile() ? 32 : 16 }}
+            uiTransform={{ height: isMobile() ? 42 : 32 }}
           />
           {isMobile() && (
             <UiEntity uiTransform={{ width: '100%', height: 58, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
