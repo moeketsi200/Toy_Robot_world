@@ -98,7 +98,8 @@ cube('Welcome sign inset', (0, -1.88, 4.25), (8.6, 0.08, 0.43), screen, 0.06)
 
 # Text faces arrivals outside the arena (Blender +Y is scene -Z).
 label('ARENA ENTRY', (0, -1.94, 4.26), 0.34, white, (math.radians(90), 0, 0))
-label('TOY ROBOT WORLDS', (0, 3.65, 4.05), 0.28, white, (math.radians(-90), 0, 0))
+# Face the title toward arrivals while keeping its letters upright.
+label('TOY ROBOT WORLDS', (0, 3.65, 4.05), 0.28, white, (math.radians(90), 0, math.radians(180)))
 
 # Central interactive terminal shell. Its touch/click collider stays in SDK code.
 cube('Terminal pedestal', (0, 1.2, 0.72), (2.7, 1.55, 0.72), carbon, 0.16)

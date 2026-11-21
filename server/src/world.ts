@@ -1,4 +1,5 @@
 import { RobotState, ClientCommand, GameEvent, WorldTickPacket, RobotClassId, ROBOT_CLASSES, MAX_ROBOT_HP } from './types'
+import { ARENA_COVER_OBSTACLES } from './arenaObstacles'
 
 interface BoxCollider {
   minX: number
@@ -22,13 +23,14 @@ export class GameWorld {
   private classLocked = new Set<string>()
   private pendingEvents: GameEvent[] = []
 
-  // Cyber Battle Zone barricades (match the client arena bounds)
+  // Perimeter barricades plus cover boxes shared with the arena model.
   private obstacles: BoxCollider[] = [
     this.createBox(32, 57.41, 51.2, 2.64),
     this.createBox(5.14, 32.66, 2.29, 46.49),
     this.createBox(58.86, 32.66, 2.29, 46.49),
     this.createBox(14.1, 4.59, 23.62, 2.45),
-    this.createBox(49.9, 4.59, 23.62, 2.45)
+    this.createBox(49.9, 4.59, 23.62, 2.45),
+    ...ARENA_COVER_OBSTACLES
   ]
 
   // Bottomless Pits

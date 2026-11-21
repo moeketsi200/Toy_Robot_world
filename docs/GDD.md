@@ -211,7 +211,7 @@ graph TD
 
     subgraph Ground Arena Y=0m to 6m
         G1[60m x 60m Cyber Grid]
-        G2[4x Massive Cyber-Pillar Obstacles]
+        G2[4x Compact Cyber-Pillar Cover Obstacles]
         G3[4x Natural Rock Formations]
         G4[4x Bottomless Pits 4m x 4m]
         G5[2x Corner Blue Shield Recharge Stations]
@@ -225,10 +225,10 @@ graph TD
 ```
 
 ### Hazard & Object Specifications
-- **Rock / Mountain Obstacles**:
-  - Heights: 4.5 meters.
+- **Pillar and Rock Cover**:
+  - Four cyber pillars and four faceted rock formations, approximately 2.9 meters tall at their highest point.
   - Indestructible colliders that block both robot physical motion and laser hitscan rays.
-  - Serves as the primary cover mechanism for executing repairs.
+  - Serves as cover for breaking line of sight and executing repairs.
 - **Bottomless Pits**:
   - Size: 4m × 4m open shaft tiles with pulsing warning stripes and bottomless darkness.
   - Falling in triggers instant robot destruction, death SFX, camera shake, and returns the player to the Sky Hangar.

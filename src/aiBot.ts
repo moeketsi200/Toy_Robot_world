@@ -7,7 +7,7 @@ import {
   Billboard
 } from '@dcl/sdk/ecs'
 import { Color4, Vector3, Quaternion } from '@dcl/sdk/math'
-import { SentinelBot, MechPilot, MechStateEnum } from './components'
+import { SentinelBot, MechPilot, MechStateEnum, Obstacle } from './components'
 import { playerMechEntity, spawnLaserBeam } from './mechController'
 import { getGameMode } from './gameMode'
 import { MAX_ROBOT_HP } from '../server/src/types'
@@ -211,8 +211,20 @@ export function sentinelAiSystem(dt: number) {
         aimBotTurret(botEnt)
 
         const patrolSpeed = 4.2
-        botTransform.position.x += Math.sin(angleRad) * patrolSpeed * dt
-        botTransform.position.z += Math.cos(angleRad) * patrolSpeed * dt
+        const nextX = botTransform.position.x + Math.sin(angleRad) * patrolSpeed * dt
+        const nextZ = botTransform.position.z + Math.cos(angleRad) * patrolSpeed * dt
+        let blocked = false
+        for (const [_, obstacle] of engine.getEntitiesWith(Obstacle)) {
+          if (nextX >= obstacle.minX - 1.2 && nextX <= obstacle.maxX + 1.2 &&
+              nextZ >= obstacle.minZ - 1.2 && nextZ <= obstacle.maxZ + 1.2) {
+            blocked = true
+            break
+          }
+        }
+        if (!blocked) {
+          botTransform.position.x = nextX
+          botTransform.position.z = nextZ
+        }
       }
     }
   }

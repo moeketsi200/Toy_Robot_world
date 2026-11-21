@@ -1,6 +1,8 @@
 """Build the clean Cyber Battle Zone arena without stadium or team displays."""
 
 import bpy
+import math
+import random
 from pathlib import Path
 from mathutils import Vector
 
@@ -43,6 +45,10 @@ black = material('Carbon black', (0.012, 0.018, 0.026), 0.45, 0.35)
 floor_mat = material('Arena floor | dark graphite', (0.035, 0.045, 0.06), 0.55, 0.42)
 white = material('Cool white lettering', (0.82, 0.9, 1.0), 0.2, 0.3, (0.55, 0.72, 1.0), 0.5)
 red = material('Cyber Battle Zone red', (1.0, 0.015, 0.035), 0.25, 0.25, (1.0, 0.005, 0.02), 4.0)
+basalt = material('Basalt cover | charcoal', (0.16, 0.18, 0.19), 0.05, 0.92)
+basalt_light = material('Basalt cover | slate', (0.23, 0.25, 0.26), 0.03, 0.88)
+COVER_SCALE = 0.65
+COVER_FLOOR_Z = 0.15
 
 
 def cube(name, location, dimensions, mat, bevel=0.0):
@@ -76,6 +82,92 @@ def text_obj(body, location, size, mat):
     return ob
 
 
+def outward_triangle(vertices, a_index, b_index, c_index, center):
+    a, b, c = (vertices[a_index], vertices[b_index], vertices[c_index])
+    ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    ac = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+    normal = (
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0]
+    )
+    face_center = tuple((a[i] + b[i] + c[i]) / 3 for i in range(3))
+    toward_face = tuple(face_center[i] - center[i] for i in range(3))
+    if sum(normal[i] * toward_face[i] for i in range(3)) < 0:
+        return (a_index, c_index, b_index)
+    return (a_index, b_index, c_index)
+
+
+def rock_mesh(name, location, dimensions, seed, mat):
+    width, depth, height = dimensions
+    rng = random.Random(seed)
+    segments = 7
+    vertices = []
+
+    for layer, base_height, min_radius, max_radius, phase in (
+        (0, 0.08, 0.84, 1.08, 0.0),
+        (1, 0.58, 0.62, 0.98, 0.24)
+    ):
+        for i in range(segments):
+            angle = (2 * math.pi * i / segments) + phase + rng.uniform(-0.09, 0.09)
+            radius = rng.uniform(min_radius, max_radius)
+            z = height * (base_height + (rng.uniform(-0.04, 0.04) if layer else 0))
+            vertices.append((math.cos(angle) * width * 0.5 * radius, math.sin(angle) * depth * 0.5 * radius, z))
+
+    bottom_center = len(vertices)
+    vertices.append((rng.uniform(-0.08, 0.08) * width, rng.uniform(-0.08, 0.08) * depth, 0.02 * height))
+    peak = len(vertices)
+    vertices.append((rng.uniform(-0.12, 0.12) * width, rng.uniform(-0.12, 0.12) * depth, height))
+
+    center = (0, 0, height * 0.45)
+    triangles = []
+    for i in range(segments):
+        nxt = (i + 1) % segments
+        triangles.append(outward_triangle(vertices, bottom_center, nxt, i, center))
+        triangles.append(outward_triangle(vertices, i, nxt, segments + nxt, center))
+        triangles.append(outward_triangle(vertices, i, segments + nxt, segments + i, center))
+        triangles.append(outward_triangle(vertices, segments + i, segments + nxt, peak, center))
+
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(vertices, [], triangles)
+    mesh.materials.append(mat)
+    mesh.update()
+    ob = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(ob)
+    ob.location = location
+    return ob
+
+
+def add_cyber_pillar(name, x, y):
+    def scaled_height(z):
+        return COVER_FLOOR_Z + COVER_SCALE * (z - COVER_FLOOR_Z)
+
+    def scaled_dimensions(dimensions):
+        return tuple(value * COVER_SCALE for value in dimensions)
+
+    cube(f'{name} | carbon foot', (x, y, scaled_height(0.33)), scaled_dimensions((2.6, 2.6, 0.36)), black, 0.08)
+    cube(f'{name} | armor column', (x, y, scaled_height(1.69)), scaled_dimensions((1.8, 1.8, 2.36)), steel, 0.08)
+    cube(f'{name} | red signal band', (x, y, scaled_height(1.10)), scaled_dimensions((2.02, 2.02, 0.10)), red, 0.02)
+    cube(f'{name} | titanium collar', (x, y, scaled_height(2.55)), scaled_dimensions((2.05, 2.05, 0.10)), steel2, 0.03)
+    cube(f'{name} | cap', (x, y, scaled_height(2.99)), scaled_dimensions((2.22, 2.22, 0.24)), steel2, 0.06)
+
+
+def add_rock_formation(name, x, y, seed):
+    pieces = (
+        (0.0, 0.0, (2.2, 1.8, 2.95), basalt),
+        (-0.72, 0.14, (1.55, 1.5, 2.2), basalt_light),
+        (0.72, -0.18, (1.65, 1.45, 2.4), basalt)
+    )
+    for index, (offset_x, offset_y, dimensions, mat) in enumerate(pieces):
+        rock_mesh(
+            f'{name} | boulder {index + 1}',
+            (x + offset_x * COVER_SCALE, y + offset_y * COVER_SCALE, COVER_FLOOR_Z),
+            tuple(value * COVER_SCALE for value in dimensions),
+            seed + index,
+            mat
+        )
+
+
 # Structural platform and the unobstructed combat deck.
 cube('Foundation slab', (0, 0, -0.8), (42, 34, 1.2), black, 0.35)
 cube('Arena deck', (0, 0, -0.12), (39, 31, 0.28), steel, 0.18)
@@ -95,6 +187,12 @@ cube('Logo frame left', (-5, -1, 0.24), (0.12, 5.3, 0.05), red, 0.006)
 cube('Logo frame right', (5, -1, 0.24), (0.12, 5.3, 0.05), red, 0.006)
 text_obj('CYBER', (0, -0.5, 0.27), 1.25, white)
 text_obj('BATTLE ZONE', (0, -1.75, 0.27), 0.95, red)
+
+# Four tall pillars and four faceted rock clusters provide cover around the open center lane.
+for index, (x, y) in enumerate(((-8, -5.5), (8, -5.5), (-8, 5.5), (8, 5.5)), 1):
+    add_cyber_pillar(f'Cyber cover pillar {index}', x, y)
+for index, (x, y) in enumerate(((-3.7, -8), (3.7, -8), (-3.7, 8), (3.7, 8)), 1):
+    add_rock_formation(f'Basalt cover formation {index}', x, y, 310 + index * 3)
 
 # Plain perimeter barriers keep the combat area legible without stands,
 # crowd figures, team colors, screens, or deployment scenery.

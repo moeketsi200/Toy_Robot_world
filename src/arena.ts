@@ -12,6 +12,7 @@ import {
 import { Color4, Vector3 } from '@dcl/sdk/math'
 import { Obstacle } from './components'
 import { enterMech } from './mechController'
+import { ARENA_COVER_OBSTACLES } from '../server/src/arenaObstacles'
 
 export function buildArena() {
   // Continuous arena deck and collider fill the complete 64m parcel square.
@@ -71,10 +72,15 @@ export function buildArena() {
     () => enterMech()
   )
 
-  // Match robot collision checks to the model's side and front barricades.
+  // Register the perimeter barricades and the visible pillar/rock cover for movement and shots.
   registerObstacle(15.2, 48.8, 44.8, 46.2)
   registerObstacle(13.6, 15.1, 20, 44.7)
   registerObstacle(48.9, 50.4, 20, 44.7)
+
+  for (const bounds of ARENA_COVER_OBSTACLES) {
+    const coverObstacle = engine.addEntity()
+    Obstacle.create(coverObstacle, { ...bounds })
+  }
 }
 
 function fitArenaX(value: number): number {
